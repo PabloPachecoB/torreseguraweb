@@ -1,0 +1,55 @@
+# Entorno virtual
+venv/
+env/
+.env
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.sqlite3
+
+# Archivos de configuración personales
+*.sqlite3
+*.log
+*.pot
+*.pyc
+
+# Configuración de VS Code
+.vscode/
+
+# Archivos de sistema (Windows/macOS)
+.DS_Store
+Thumbs.db
+
+# Archivos de migraciones innecesarios
+**/migrations/*.pyc
+**/migrations/__pycache__/
+
+# Archivos de base de datos local
+db.sqlite3
+db.sqlite3.bak.*
+
+# Archivos generados / uploads (no versionar)
+media/
+
+mediafiles/
+staticfiles/
+
+# Archivos de caché
+*.cache
+*.coverage
+*.egg-info/
+.cache/
+
+node_modules
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Entornos y artefactos que nunca deben subir
+.venv/
+node_modules/
+staticfiles/
+mediafiles/
+backup_data.json

@@ -1,0 +1,236 @@
+{% extends 'base.html' %}
+
+{% block title %}Visitas | Sistema de Administración de Condominios{% endblock %}
+{% block header %}Gestión de Visitas{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex justify-content-between align-items-center">
+    <div>
+        {% if edificio_gerente %}
+            <h5 class="text-primary mb-2">
+                <i class="fas fa-building"></i> {{ edificio_gerente.nombre }}
+            </h5>
+            <p class="text-muted mb-1">Total: {{ visitas.count }} visitas activas en este edificio</p>
+        {% else %}
+            <p class="text-muted mb-1">Total: {{ visitas.count }} visitas activas (todos los edificios)</p>
+        {% endif %}
+        
+        <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="mostrarHistorial">
+            <label class="form-check-label" for="mostrarHistorial">
+                Mostrar historial ({{ visitas_historicas }} visitas completadas)
+            </label>
+        </div>
+    </div>
+    <a href="{% url 'visita-create' %}" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Registrar Visita
+    </a>
+</div>
+
+{% if edificio_gerente %}
+<div class="alert alert-info mb-3">
+    <i class="fas fa-info-circle"></i>
+    <strong>Información:</strong> Como gerente del edificio <strong>{{ edificio_gerente.nombre }}</strong>, 
+    solo puede ver y gestionar las visitas correspondientes a este edificio.
+</div>
+{% endif %}
+
+<div class="card shadow">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Visitante</th>
+                        <th>Documento</th>
+                        <th>Vivienda</th>
+                        <th>Residente Autoriza</th>
+                        <th>Entrada</th>
+                        <th>Salida</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="visitasActivas">
+                    {% for visita in visitas %}
+                    <tr>
+                        <td>{{ visita.id }}</td>
+                        <td>
+                            <strong>{{ visita.nombre_visitante }}</strong>
+                            {% if visita.motivo %}
+                                <br><small class="text-muted">{{ visita.motivo|truncatechars:30 }}</small>
+                            {% endif %}
+                        </td>
+                        <td>{{ visita.documento_visitante }}</td>
+                        <td>
+                            <strong>{{ visita.vivienda_destino }}</strong>
+                            <br><small class="text-muted">{{ visita.vivienda_destino.edificio.nombre }}</small>
+                        </td>
+                        <td>{{ visita.residente_autoriza }}</td>
+                        <td>{{ visita.fecha_hora_entrada|date:"d/m/Y H:i" }}</td>
+                        <td>
+                            <span class="badge bg-warning">En proceso</span>
+                        </td>
+                        <td>
+                            <div class="btn-group" role="group">
+                                <a href="{% url 'visita-detail' visita.id %}" class="btn btn-sm btn-info" title="Ver detalles">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                                <a href="{% url 'visita-salida' visita.id %}" class="btn btn-sm btn-success" 
+                                   onclick="return confirm('¿Confirma el registro de salida de {{ visita.nombre_visitante }}?')"
+                                   title="Registrar salida">
+                                    <i class="fas fa-sign-out-alt"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center py-4">
+                            <i class="fas fa-users fa-2x text-muted mb-2"></i>
+                            <br>
+                            {% if edificio_gerente %}
+                                No hay visitas activas en el edificio {{ edificio_gerente.nombre }}
+                            {% else %}
+                                No hay visitas activas
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tbody id="visitasHistorial" class="d-none">
+                    <!-- Aquí se cargarán las visitas históricas por AJAX -->
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Paginación -->
+        {% if is_paginated %}
+        <nav aria-label="Paginación de visitas">
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page=1">&laquo; Primera</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}">Anterior</a>
+                    </li>
+                {% endif %}
+                
+                <li class="page-item active">
+                    <span class="page-link">
+                        Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+                    </span>
+                </li>
+                
+                {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}">Siguiente</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}">Última &raquo;</a>
+                    </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const checkboxHistorial = document.getElementById('mostrarHistorial');
+        const visitasHistorial = document.getElementById('visitasHistorial');
+        const visitasActivas = document.getElementById('visitasActivas');
+        
+        let historialCargado = false;
+        
+        checkboxHistorial.addEventListener('change', function() {
+            if (checkboxHistorial.checked) {
+                // Mostrar historial
+                if (!historialCargado) {
+                    // Mostrar indicador de carga
+                    visitasHistorial.innerHTML = '<tr><td colspan="8" class="text-center"><i class="fas fa-spinner fa-spin"></i> Cargando historial...</td></tr>';
+                    visitasHistorial.classList.remove('d-none');
+                    
+                    // Cargar historial mediante AJAX
+                    fetch('{% url "api-visitas-historial" %}')
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error('Error en la respuesta del servidor');
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            // Limpiar contenido actual
+                            visitasHistorial.innerHTML = '';
+                            
+                            if (data.length === 0) {
+                                // Si no hay historial, mostrar mensaje
+                                const row = document.createElement('tr');
+                                row.innerHTML = '<td colspan="8" class="text-center py-4"><i class="fas fa-history fa-2x text-muted mb-2"></i><br>No hay visitas históricas</td>';
+                                visitasHistorial.appendChild(row);
+                            } else {
+                                // Agregar cada visita al historial
+                                data.forEach(visita => {
+                                    const row = document.createElement('tr');
+                                    row.classList.add('bg-light');
+                                    
+                                    // Calcular duración de la visita
+                                    const entrada = new Date(visita.fecha_hora_entrada);
+                                    const salida = new Date(visita.fecha_hora_salida);
+                                    const duracion = Math.round((salida - entrada) / (1000 * 60)); // Duración en minutos
+                                    
+                                    // Formatear fechas
+                                    const entradaStr = new Intl.DateTimeFormat('es', { 
+                                        day: '2-digit', month: '2-digit', year: 'numeric', 
+                                        hour: '2-digit', minute: '2-digit' 
+                                    }).format(entrada);
+                                    
+                                    const salidaStr = new Intl.DateTimeFormat('es', { 
+                                        day: '2-digit', month: '2-digit', year: 'numeric', 
+                                        hour: '2-digit', minute: '2-digit' 
+                                    }).format(salida);
+                                    
+                                    row.innerHTML = `
+                                        <td>${visita.id}</td>
+                                        <td>
+                                            <strong>${visita.nombre_visitante}</strong>
+                                            ${visita.motivo ? '<br><small class="text-muted">' + visita.motivo.substring(0, 30) + (visita.motivo.length > 30 ? '...' : '') + '</small>' : ''}
+                                        </td>
+                                        <td>${visita.documento_visitante}</td>
+                                        <td>${visita.vivienda_destino}</td>
+                                        <td>${visita.residente_autoriza}</td>
+                                        <td>${entradaStr}</td>
+                                        <td>${salidaStr}</td>
+                                        <td><span class="badge bg-success">${duracion} min.</span></td>
+                                    `;
+                                    
+                                    visitasHistorial.appendChild(row);
+                                });
+                            }
+                            
+                            historialCargado = true;
+                        })
+                        .catch(error => {
+                            console.error('Error al cargar historial de visitas:', error);
+                            // Mostrar mensaje de error
+                            visitasHistorial.innerHTML = '<tr><td colspan="8" class="text-center text-danger"><i class="fas fa-exclamation-triangle"></i> Error al cargar historial</td></tr>';
+                        });
+                } else {
+                    visitasHistorial.classList.remove('d-none');
+                }
+                
+                // Ocultar visitas activas
+                visitasActivas.classList.add('d-none');
+            } else {
+                // Ocultar historial y mostrar activas
+                visitasHistorial.classList.add('d-none');
+                visitasActivas.classList.remove('d-none');
+            }
+        });
+    });
+</script>
+{% endblock %}

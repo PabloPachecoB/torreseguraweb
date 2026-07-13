@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% load crispy_forms_tags %}
+
+{% block title %}{% if form.instance.pk %}Editar{% else %}Nuevo{% endif %} Reporte | Sistema de Administración de Condominios{% endblock %}
+{% block header %}{% if form.instance.pk %}Editar{% else %}Nuevo{% endif %} Reporte de {{ tipo_reporte|title }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card shadow">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    {{ form|crispy }}
+                    <div class="mt-4 d-flex justify-content-between">
+                        <a href="{% url 'reporte-list' %}" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left"></i> Cancelar
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> {% if form.instance.pk %}Guardar{% else %}Continuar{% endif %}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize date inputs to use the browser's date picker
+        var fechaDesde = document.querySelector('input[name="fecha_desde"]');
+        var fechaHasta = document.querySelector('input[name="fecha_hasta"]');
+
+        if (fechaDesde) {
+            fechaDesde.setAttribute('type', 'date');
+        }
+        if (fechaHasta) {
+            fechaHasta.setAttribute('type', 'date');
+        }
+    });
+</script>

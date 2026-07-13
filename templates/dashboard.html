@@ -1,0 +1,556 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Dashboard | Sistema de Administración de Condominios{% endblock %}
+{% block header %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- Selector de edificio (solo Admin puede cambiar) -->
+{% if request.user.rol.nombre == "Administrador" %}
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form id="edificioFilterForm" method="get" class="d-flex align-items-center">
+            <label for="edificioSelect" class="me-2 mb-0 fw-bold">Edificio:</label>
+            <select id="edificioSelect" name="edificio" class="form-select" style="width: 300px;">
+                <option value="">Todos los edificios</option>
+                {% for edificio in edificios %}
+                <option value="{{ edificio.id }}" {% if edificio_seleccionado == edificio.id %}selected{% endif %}>
+                    {{ edificio.nombre }}
+                </option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary ms-2">
+                <i class="fas fa-filter"></i> Filtrar
+            </button>
+            {% if edificio_seleccionado %}
+            <a href="{% url 'dashboard' %}" class="btn btn-secondary ms-2">
+                <i class="fas fa-broom"></i> Limpiar
+            </a>
+            {% endif %}
+        </form>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info mb-4">
+    <h5 class="mb-0"><i class="fas fa-building"></i> Edificio: <strong>{{ edificio_nombre }}</strong></h5>
+</div>
+{% endif %}
+
+<!-- Título del dashboard con edificio seleccionado (solo Admin) -->
+{% if edificio_seleccionado and request.user.rol.nombre == "Administrador" %}
+<div class="alert alert-info mb-4">
+    <h5 class="mb-0"><i class="fas fa-info-circle"></i> Mostrando información de: <strong>{{ edificio_nombre }}</strong>
+    </h5>
+</div>
+{% endif %}
+
+<!-- Resumen general -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-white bg-primary stat-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title">Viviendas</h5>
+                        <h2 class="card-text">{{ total_viviendas }}</h2>
+                    </div>
+                    <i class="fas fa-home fa-3x"></i>
+                </div>
+                <div class="progress mt-2" style="height: 8px;">
+                    <div class="progress-bar bg-light" role="progressbar" style="width: {{ porcentaje_ocupacion }}%">
+                    </div>
+                </div>
+                <div class="small mt-1">{{ porcentaje_ocupacion|floatformat:1 }}% ocupadas</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-success stat-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title">Residentes</h5>
+                        <h2 class="card-text">{{ total_residentes }}</h2>
+                    </div>
+                    <i class="fas fa-users fa-3x"></i>
+                </div>
+                <div class="small mt-3">
+                    <span class="me-2"><i class="fas fa-user-tag"></i> {{ propietarios_count }} propietarios</span>
+                    <span><i class="fas fa-user"></i> {{ inquilinos_count }} inquilinos</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-info stat-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title">Personal</h5>
+                        <h2 class="card-text">{{ total_personal }}</h2>
+                    </div>
+                    <i class="fas fa-id-badge fa-3x"></i>
+                </div>
+                <div class="small mt-3">
+                    <span class="me-2"><i class="fas fa-tasks"></i> {{ total_asignaciones_pendientes }} tareas
+                        pendientes</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-warning stat-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title">Visitas Activas</h5>
+                        <h2 class="card-text">{{ visitas_activas }}</h2>
+                    </div>
+                    <i class="fas fa-user-check fa-3x"></i>
+                </div>
+                <div class="text-center mt-3">
+                    <a href="{% url 'visita-create' %}" class="btn btn-sm btn-light">Registrar nueva</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Resumen Financiero -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card border-start border-4 border-danger shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small text-uppercase fw-bold">Cuotas Pendientes</div>
+                        <h3 class="mb-0">{{ cuotas_pendientes_count }}</h3>
+                    </div>
+                    <i class="fas fa-file-invoice-dollar fa-2x text-danger opacity-50"></i>
+                </div>
+                {% if cuotas_vencidas_count > 0 %}
+                <div class="small text-danger mt-2">
+                    <i class="fas fa-exclamation-triangle"></i> {{ cuotas_vencidas_count }} vencida{{ cuotas_vencidas_count|pluralize:"s" }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-start border-4 border-warning shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small text-uppercase fw-bold">Pagos por Verificar</div>
+                        <h3 class="mb-0">{{ pagos_por_verificar }}</h3>
+                    </div>
+                    <i class="fas fa-clock fa-2x text-warning opacity-50"></i>
+                </div>
+                {% if pagos_por_verificar > 0 %}
+                <a href="{% url 'pago-list' %}?estado=PENDIENTE" class="small text-warning mt-2 d-block">
+                    <i class="fas fa-arrow-right"></i> Revisar pagos
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-start border-4 border-primary shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="text-muted small text-uppercase fw-bold">Total por Cobrar</div>
+                        <h3 class="mb-0">{{ total_por_cobrar|floatformat:2 }} <small class="fs-6">BOB</small></h3>
+                    </div>
+                    <i class="fas fa-money-bill-wave fa-2x text-primary opacity-50"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-start border-4 border-success shadow-sm h-100">
+            <div class="card-body">
+                <div class="text-muted small text-uppercase fw-bold mb-2">Acciones Financieras</div>
+                <div class="d-grid gap-1">
+                    <a href="{% url 'cuota-list' %}" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-list"></i> Ver Cuotas
+                    </a>
+                    <a href="{% url 'pago-list' %}" class="btn btn-sm btn-outline-success">
+                        <i class="fas fa-money-bill-wave"></i> Ver Pagos
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if ultimos_pagos_pendientes %}
+<!-- Pagos pendientes de verificacion -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card shadow-sm border-start border-4 border-warning">
+            <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-10">
+                <h5 class="mb-0"><i class="fas fa-clock text-warning"></i> Pagos Pendientes de Verificacion</h5>
+                <a href="{% url 'pago-list' %}?estado=PENDIENTE" class="btn btn-sm btn-outline-warning">
+                    Ver todos
+                </a>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover">
+                        <thead>
+                            <tr>
+                                <th>Residente</th>
+                                <th>Vivienda</th>
+                                <th>Monto</th>
+                                <th>Metodo</th>
+                                <th>Fecha</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for pago in ultimos_pagos_pendientes %}
+                            <tr>
+                                <td>
+                                    {% if pago.residente and pago.residente.usuario %}
+                                        {{ pago.residente.usuario.get_full_name|default:pago.residente.usuario.username }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td>{{ pago.vivienda }}</td>
+                                <td><strong>{{ pago.monto|floatformat:2 }} BOB</strong></td>
+                                <td>{{ pago.get_metodo_pago_display }}</td>
+                                <td>{{ pago.fecha_pago|date:"d/m/Y" }}</td>
+                                <td>
+                                    <a href="{% url 'pago-detail' pago.pk %}" class="btn btn-sm btn-outline-primary" title="Ver detalle">
+                                        <i class="fas fa-eye"></i>
+                                    </a>
+                                    <a href="{% url 'pago-verificar' pago.pk %}" class="btn btn-sm btn-success" title="Verificar">
+                                        <i class="fas fa-check"></i>
+                                    </a>
+                                    <a href="{% url 'pago-rechazar' pago.pk %}" class="btn btn-sm btn-danger" title="Rechazar">
+                                        <i class="fas fa-times"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="row mb-4">
+    <!-- Gráfica de ocupación de viviendas -->
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-chart-pie"></i> Ocupación de Viviendas</h5>
+                <a href="{% url 'vivienda-list' %}" class="btn btn-sm btn-outline-primary">
+                    Ver todas
+                </a>
+            </div>
+            <div class="card-body">
+                <canvas id="ocupacionChart" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Estadísticas de tipos de residentes -->
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-users"></i> Distribución de Residentes</h5>
+                <a href="{% url 'residente-list' %}" class="btn btn-sm btn-outline-primary">
+                    Ver todos
+                </a>
+            </div>
+            <div class="card-body">
+                {% if total_residentes > 0 %}
+                <canvas id="residentesChart" height="250"></canvas>
+                {% else %}
+                <div class="alert alert-info">
+                    <p class="mb-0 text-center">No hay residentes registrados</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <!-- Últimas asignaciones -->
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-tasks"></i> Asignaciones Recientes</h5>
+                <a href="{% url 'asignacion-list' %}" class="btn btn-sm btn-outline-primary">
+                    Ver todas
+                </a>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Título</th>
+                                <th>Empleado</th>
+                                <th>Estado</th>
+                                <th>Prioridad</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for asignacion in ultimas_asignaciones %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'asignacion-detail' asignacion.id %}">{{ asignacion.titulo|truncatechars:30 }}</a>
+                                    <div class="small text-muted">{{ asignacion.fecha_inicio|date:"d/m/Y" }}</div>
+                                </td>
+                                <td>{{ asignacion.empleado.usuario.first_name }} {{ asignacion.empleado.usuario.last_name }}</td>
+                                <td>
+                                    {% if asignacion.estado == 'PENDIENTE' %}
+                                    <span class="badge bg-warning text-dark">Pendiente</span>
+                                    {% elif asignacion.estado == 'EN_PROGRESO' %}
+                                    <span class="badge bg-info text-dark">En Progreso</span>
+                                    {% elif asignacion.estado == 'COMPLETADA' %}
+                                    <span class="badge bg-success">Completada</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">Cancelada</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if asignacion.prioridad == 1 %}
+                                    <span class="badge bg-secondary">Baja</span>
+                                    {% elif asignacion.prioridad == 2 %}
+                                    <span class="badge bg-primary">Normal</span>
+                                    {% elif asignacion.prioridad == 3 %}
+                                    <span class="badge bg-warning text-dark">Alta</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">Urgente</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center">No hay asignaciones recientes</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Últimas visitas -->
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-clipboard-list"></i> Visitas Recientes</h5>
+                <a href="{% url 'visita-list' %}" class="btn btn-sm btn-outline-primary">
+                    Ver todas
+                </a>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Visitante</th>
+                                <th>Vivienda</th>
+                                <th>Entrada</th>
+                                <th>Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for visita in ultimas_visitas %}
+                            <tr>
+                                <td>
+                                    {{ visita.nombre_visitante }}
+                                    <div class="small text-muted">{{ visita.documento_visitante }}</div>
+                                </td>
+                                <td>{{ visita.vivienda_destino }}</td>
+                                <td>{{ visita.fecha_hora_entrada|date:"d/m/Y H:i" }}</td>
+                                <td>
+                                    {% if visita.fecha_hora_salida %}
+                                    <span class="badge bg-secondary">Finalizada</span>
+                                    {% else %}
+                                    <span class="badge bg-success">Activa</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center">No hay visitas recientes</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Accesos directos -->
+<div class="row">
+    <div class="col-md-12">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-star"></i> Accesos Rápidos</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-2 col-sm-4 col-6 mb-3">
+                        <a href="{% url 'visita-create' %}" class="text-decoration-none">
+                            <div class="p-3 rounded bg-light">
+                                <i class="fas fa-user-plus fa-2x text-success mb-2"></i>
+                                <div>Registrar Visita</div>
+                            </div>
+                        </a>
+                    </div>
+                    <div class="col-md-2 col-sm-4 col-6 mb-3">
+                        <a href="{% url 'movimiento-entrada' %}" class="text-decoration-none">
+                            <div class="p-3 rounded bg-light">
+                                <i class="fas fa-sign-in-alt fa-2x text-primary mb-2"></i>
+                                <div>Registrar Entrada</div>
+                            </div>
+                        </a>
+                    </div>
+                    <div class="col-md-2 col-sm-4 col-6 mb-3">
+                        <a href="{% url 'asignacion-create' %}" class="text-decoration-none">
+                            <div class="p-3 rounded bg-light">
+                                <i class="fas fa-tasks fa-2x text-warning mb-2"></i>
+                                <div>Nueva Asignación</div>
+                            </div>
+                        </a>
+                    </div>
+                    
+                    <div class="col-md-2 col-sm-4 col-6 mb-3">
+                        <a href="{% url 'vivienda-create' %}" class="text-decoration-none">
+                            <div class="p-3 rounded bg-light">
+                                <i class="fas fa-home fa-2x text-secondary mb-2"></i>
+                                <div>Nueva Vivienda</div>
+                            </div>
+                        </a>
+                    </div>
+                    <div class="col-md-2 col-sm-4 col-6 mb-3">
+                        <a href="{% url 'empleado-create' %}" class="text-decoration-none">
+                            <div class="p-3 rounded bg-light">
+                                <i class="fas fa-id-badge fa-2x text-info mb-2"></i>
+                                <div>Nuevo Empleado</div>
+                            </div>
+                        </a>
+                    </div>
+                    <div class="col-md-2 col-sm-4 col-6 mb-3">
+                        <a href="{% url 'cuota-create' %}" class="text-decoration-none">
+                            <div class="p-3 rounded bg-light">
+                                <i class="fas fa-file-invoice-dollar fa-2x text-danger mb-2"></i>
+                                <div>Nueva Cuota</div>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Auto-enviar el formulario cuando cambia el selector
+    document.addEventListener('DOMContentLoaded', function () {
+        const edificioSelect = document.getElementById('edificioSelect');
+        if (edificioSelect) {
+            edificioSelect.addEventListener('change', function () {
+                document.getElementById('edificioFilterForm').submit();
+            });
+        }
+    });
+
+    // Gráfico de ocupación de viviendas
+    const ctxOcupacion = document.getElementById('ocupacionChart').getContext('2d');
+    const ocupacionChart = new Chart(ctxOcupacion, {
+        type: 'pie',
+        data: {
+            labels: ['Ocupadas', 'Desocupadas', 'En Mantenimiento'],
+            datasets: [{
+                data: [
+                    {{ viviendas_ocupadas|default:0 }},
+                    {{ viviendas_desocupadas|default:0 }},
+                    {{ viviendas_mantenimiento|default:0 }}
+                ],
+                backgroundColor: [
+                    'rgba(40, 167, 69, 0.8)',  // Verde para ocupadas
+                    'rgba(108, 117, 125, 0.8)', // Gris para desocupadas
+                    'rgba(255, 193, 7, 0.8)'   // Amarillo para mantenimiento
+                ],
+                borderColor: [
+                    'rgba(40, 167, 69, 1)',
+                    'rgba(108, 117, 125, 1)',
+                    'rgba(255, 193, 7, 1)'
+                ],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                },
+                title: {
+                    display: true,
+                    text: '{{ edificio_nombre }}',
+                    font: {
+                        size: 14
+                    }
+                }
+            }
+        }
+    });
+
+    // Gráfico de distribución de residentes
+    {% if total_residentes > 0 %}
+    const ctxResidentes = document.getElementById('residentesChart').getContext('2d');
+    const residentesChart = new Chart(ctxResidentes, {
+        type: 'pie',
+        data: {
+            labels: ['Propietarios', 'Inquilinos'],
+            datasets: [{
+                data: [{{ propietarios_count|default:0 }}, {{ inquilinos_count|default:0 }}],
+                backgroundColor: [
+                    'rgba(0, 123, 255, 0.7)',  // Azul para propietarios
+                    'rgba(23, 162, 184, 0.7)', // Cian para inquilinos
+                ],
+                borderColor: [
+                    'rgba(0, 123, 255, 1)',
+                    'rgba(23, 162, 184, 1)',
+                ],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                },
+                title: {
+                    display: true,
+                    text: 'Distribución de residentes',
+                    font: {
+                        size: 14
+                    }
+                }
+            }
+        }
+    });
+    {% endif %}
+</script>
+{% endblock %}

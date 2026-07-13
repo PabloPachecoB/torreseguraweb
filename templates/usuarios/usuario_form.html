@@ -1,0 +1,343 @@
+{% extends 'base.html' %}
+{% load crispy_forms_tags %}
+
+{% block title %}
+{% if form.instance.pk %}Editar{% else %}Nuevo{% endif %} Usuario | Sistema de Administración de Condominios
+{% endblock %}
+
+{% block header %}
+{% if form.instance.pk %}Editar{% else %}Nuevo{% endif %} Usuario
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card shadow">
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="row">
+                        <div class="col-md-6">
+                            {{ form.rol|as_crispy_field }}
+                        </div>
+
+                        <div class="col-md-6">
+                            {{ form.telefono|as_crispy_field }}
+                        </div>
+                    </div>
+                    <div class="row" id="credenciales-container-two">
+                        <div class="col-md-6">
+                            {% if 'username' in form.fields %}
+                            {{ form.username|as_crispy_field }}
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            {{ form.email|as_crispy_field }}
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            {{ form.first_name|as_crispy_field }}
+                        </div>
+                        <div class="col-md-6">
+                            {{ form.last_name|as_crispy_field }}
+                        </div>
+                    </div>
+
+                    {% if 'password1' in form.fields and 'password2' in form.fields %}
+                    <div class="row" id="credenciales-container">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="id_password1" class="form-label">{{ form.password1.label }}</label>
+                                <div class="input-group">
+                                    {{ form.password1 }}
+                                    <button type="button" class="btn btn-outline-secondary"
+                                        onclick="togglePassword('id_password1', this)">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                                {% if form.password1.help_text %}
+                                <small class="form-text text-muted">{{ form.password1.help_text }}</small>
+                                {% endif %}
+                                {% if form.password1.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {% for error in form.password1.errors %}
+                                    {{ error }}
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="id_password2" class="form-label">{{ form.password2.label }}</label>
+                                <div class="input-group">
+                                    {{ form.password2 }}
+                                    <button type="button" class="btn btn-outline-secondary"
+                                        onclick="togglePassword('id_password2', this)">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                                {% if form.password2.help_text %}
+                                <small class="form-text text-muted">{{ form.password2.help_text }}</small>
+                                {% endif %}
+                                {% if form.password2.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {% for error in form.password2.errors %}
+                                    {{ error }}
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if form.nueva_password %}
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="id_nueva_password" class="form-label">{{ form.nueva_password.label
+                                    }}</label>
+                                <div class="input-group">
+                                    {{ form.nueva_password }}
+                                    <button type="button" class="btn btn-outline-secondary"
+                                        onclick="togglePassword('id_nueva_password', this)">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                                {% if form.nueva_password.help_text %}
+                                <small class="form-text text-muted">{{ form.nueva_password.help_text }}</small>
+                                {% endif %}
+                                {% if form.nueva_password.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {% for error in form.nueva_password.errors %}
+                                    {{ error }}
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div id="campos-credenciales-ocultos"
+                        style="position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden;">
+
+                        {{ form.username }}
+                        {{ form.email }}
+                        {{ form.password1 }}
+                        {{ form.password2 }}
+                    </div>
+                    <div class="row" id="credenciales-container-two">
+                        <div class="col-md-6">
+                            {% if 'username' in form.fields %}
+                            {{ form.username|as_crispy_field }}
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            {{ form.email|as_crispy_field }}
+                        </div>
+                    </div>
+                    {% endif %}
+                    <div id="campos-personal-container" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-6">{{ form.puesto|as_crispy_field }}</div>
+                            <div class="col-md-6">{{ form.fecha_contratacion|as_crispy_field }}</div>
+                            <div class="col-md-6">{{ form.tipo_contrato|as_crispy_field }}</div>
+                            <div class="col-md-6">{{ form.salario|as_crispy_field }}</div>
+                            <div class="col-md-6">{{ form.contacto_emergencia|as_crispy_field }}</div>
+                            <div class="col-md-6">{{ form.telefono_emergencia|as_crispy_field }}</div>
+                            <div class="col-md-12">{{ form.especialidad|as_crispy_field }}</div>
+                        </div>
+                    </div>
+
+                    
+                    <div class="row" id="edificio-container" style="display: none;">
+                        <div class="col-md-12">
+                            {{ form.edificio|as_crispy_field }}
+                        </div>
+                    </div>
+                    <div class="row" id="vivienda-container" style="display: none;">
+                        <div class="col-md-12">
+                            {{ form.vivienda|as_crispy_field }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            {{ form.numero_documento|as_crispy_field }}
+                            <small class="form-text text-muted">Por defecto: CÉDULA</small>
+                        </div>
+                    </div>
+
+                    {% if form.foto %}
+                    {{ form.foto|as_crispy_field }}
+                    {% elif form.instance.foto %}
+                    <div class="mb-3">
+                        <label class="form-label">Foto actual</label>
+                        <div>
+                            <img src="{{ form.instance.foto.url }}" alt="Foto de perfil" class="img-thumbnail"
+                                style="max-width: 150px;">
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="mt-4 d-flex justify-content-between">
+                        <a href="{% url 'usuario-list' %}" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left"></i> Cancelar
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Guardar
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Clase para ocultar pero mantener en el DOM */
+    .campo-oculto {
+        visibility: hidden !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        position: absolute !important;
+        left: -9999px !important;
+    }
+
+    /* Alternativa: usar opacity */
+    .campo-invisible {
+        opacity: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+
+    /* Asegurar que los campos de contraseña tengan el estilo correcto */
+    .input-group .form-control {
+        border-right: 0;
+    }
+
+    .input-group .btn-outline-secondary {
+        border-left: 0;
+        background-color: #fff;
+        border-color: #ced4da;
+    }
+
+    .input-group .btn-outline-secondary:hover {
+        background-color: #f8f9fa;
+        border-color: #ced4da;
+    }
+
+    .input-group .btn-outline-secondary:focus {
+        box-shadow: none;
+        border-color: #80bdff;
+        background-color: #fff;
+    }
+
+    /* Ajustar el focus del input para que se vea bien con el botón */
+    .input-group .form-control:focus {
+        border-color: #80bdff;
+        box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        z-index: 3;
+    }
+</style>
+
+<script>
+    // Solución 1: Remover el atributo 'required' dinámicamente
+    document.addEventListener("DOMContentLoaded", function () {
+        const rolField = document.getElementById("id_rol");
+        const edificioContainer = document.getElementById("edificio-container");
+        const viviendaContainer = document.getElementById("vivienda-container");
+        const edificioField = document.getElementById("id_edificio");
+        const viviendaField = document.getElementById("id_vivienda");
+
+        function toggleCampos() {
+            const selectedRol = rolField.options[rolField.selectedIndex].text;
+            const camposPersonalContainer = document.getElementById("campos-personal-container");
+            const credencialesContainerTwo = document.getElementById("credenciales-container-two");
+            const credencialesContainer = document.getElementById("credenciales-container");
+
+            // Campos de credenciales
+            const usernameField = document.getElementById("id_username");
+            const emailField = document.getElementById("id_email");
+            const pass1Field = document.getElementById("id_password1");
+            const pass2Field = document.getElementById("id_password2");
+
+            if (selectedRol === "Personal") {
+                // Mostrar campos de personal (puesto, contrato, etc.)
+                camposPersonalContainer.style.display = "block";
+                // Mantener credenciales visibles para acceso móvil
+                if (credencialesContainerTwo) credencialesContainerTwo.style.display = "flex";
+                if (credencialesContainer) credencialesContainer.style.display = "flex";
+            } else {
+                // Ocultar campos de personal
+                camposPersonalContainer.style.display = "none";
+                if (credencialesContainerTwo) credencialesContainerTwo.style.display = "flex";
+                if (credencialesContainer) credencialesContainer.style.display = "flex";
+            }
+
+            // Lógica para edificio y vivienda
+            edificioContainer.style.display = (
+                selectedRol === "Residente" ||
+                selectedRol === "Gerente" ||
+                selectedRol === "Vigilante" ||
+                selectedRol === "Personal"
+            ) ? "block" : "none";
+
+            viviendaContainer.style.display = (selectedRol === "Residente") ? "block" : "none";
+        }
+
+        // Cargar viviendas según edificio seleccionado
+        function cargarViviendas(edificioId) {
+            fetch(`/usuarios/ajax/cargar-viviendas/?edificio_id=${edificioId}`)
+                .then(response => response.json())
+                .then(data => {
+                    viviendaField.innerHTML = '';
+                    data.forEach(function (vivienda) {
+                        const option = document.createElement('option');
+                        option.value = vivienda.id;
+                        option.textContent = vivienda.nombre;
+                        viviendaField.appendChild(option);
+                    });
+                });
+        }
+
+        // Asociar eventos
+        rolField.addEventListener("change", toggleCampos);
+        if (edificioField) {
+            edificioField.addEventListener("change", function () {
+                const edificioId = this.value;
+                if (edificioId) {
+                    cargarViviendas(edificioId);
+                } else {
+                    viviendaField.innerHTML = '';
+                }
+            });
+        }
+
+        toggleCampos(); // Ejecutar al cargar
+    });
+
+    function togglePassword(id, button) {
+        const input = document.getElementById(id);
+        const icon = button.querySelector('i');
+
+        if (input.type === 'password') {
+            input.type = 'text';
+            icon.classList.remove('fa-eye');
+            icon.classList.add('fa-eye-slash');
+        } else {
+            input.type = 'password';
+            icon.classList.remove('fa-eye-slash');
+            icon.classList.add('fa-eye');
+        }
+    }
+
+
+</script>
+{% endblock %}
