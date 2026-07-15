@@ -212,6 +212,14 @@ def tiene_acceso_web(user):
 @login_required
 def cargar_viviendas(request):
     edificio_id = request.GET.get('edificio_id')
+
+    # Gerente solo puede consultar viviendas de su propio edificio
+    user = request.user
+    if (hasattr(user, 'rol') and user.rol and user.rol.nombre == 'Gerente'
+            and hasattr(user, 'gerente') and user.gerente and user.gerente.edificio):
+        if str(user.gerente.edificio.id) != str(edificio_id):
+            return JsonResponse({'error': 'Solo puedes consultar viviendas de tu edificio.'}, status=403)
+
     viviendas = Vivienda.objects.filter(edificio_id=edificio_id, estado='DESOCUPADO', activo=True).order_by('numero')
     viviendas_json = [{"id": v.id, "nombre": f"{v.numero} - Piso {v.piso}"} for v in viviendas]
     return JsonResponse(viviendas_json, safe=False)

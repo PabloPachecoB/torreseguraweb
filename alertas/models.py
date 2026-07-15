@@ -11,12 +11,34 @@ class Alerta(models.Model):
         ('Salud', 'Salud'),
         ('Aviso importante', 'Aviso importante'),
         ('Reunión', 'Reunión'),
+        ('Incidencia', 'Incidencia'),
     ]
-    
+
     ESTADOS = [
         ('pendiente', 'Pendiente'),
         ('en_proceso', 'En Proceso'),
         ('resuelto', 'Resuelto'),
+    ]
+
+    # Categoría de la incidencia (solo aplica cuando tipo='Incidencia').
+    # La asigna el agente al clasificar; determina la ruta de asignación.
+    CATEGORIAS_INCIDENCIA = [
+        ('plomeria', 'Plomería'),
+        ('electricidad', 'Electricidad'),
+        ('ascensores', 'Ascensores'),
+        ('vidrios', 'Vidrios'),
+        ('limpieza', 'Limpieza'),
+        ('jardineria', 'Jardinería'),
+        ('normas', 'Incumplimiento de normas'),
+        ('otro', 'Otro'),
+    ]
+
+    # Prioridad la asigna el agente; determina timeout y orden en el dashboard.
+    PRIORIDADES = [
+        ('critica', 'Crítica'),
+        ('alta', 'Alta'),
+        ('media', 'Media'),
+        ('baja', 'Baja'),
     ]
     
     # Transiciones válidas de estado
@@ -50,6 +72,25 @@ class Alerta(models.Model):
         related_name='alertas',
     )
 
+    # ── Campos de incidencias (gestionados por el agente) ────────────────
+    categoria = models.CharField(
+        max_length=20, choices=CATEGORIAS_INCIDENCIA, null=True, blank=True,
+        help_text='Categoría de la incidencia; la asigna el agente al clasificar.',
+    )
+    prioridad = models.CharField(
+        max_length=10, choices=PRIORIDADES, default='media',
+        help_text='Prioridad asignada por el agente; determina timeout y orden.',
+    )
+    duplicado_de = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='duplicados',
+        help_text='Si esta alerta es un duplicado, apunta a la alerta principal.',
+    )
+    requiere_atencion_manual = models.BooleanField(
+        default=False,
+        help_text='True cuando el agente agotó la escalera de asignación.',
+    )
+
     class Meta:
         ordering = ['-fecha']
         verbose_name = 'Alerta'
@@ -58,6 +99,7 @@ class Alerta(models.Model):
             models.Index(fields=['tipo', 'estado']),
             models.Index(fields=['estado', '-fecha']),
             models.Index(fields=['edificio', '-fecha']),
+            models.Index(fields=['edificio', 'categoria', 'estado']),
         ]
 
     def clean(self):

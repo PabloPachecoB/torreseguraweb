@@ -9,7 +9,6 @@ from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
-from django.db.models import Q
 from datetime import datetime
 import json
 from .models import Alerta, Anuncio, OpcionVoto, Voto
@@ -26,6 +25,13 @@ def _resolver_edificio_usuario(user):
         return user.gerente.edificio
     if hasattr(user, 'empleado') and user.empleado:
         return user.empleado.edificio
+    return None
+
+
+def _edificio_de_gerente(user):
+    """Edificio del gerente, o None si no aplica."""
+    if hasattr(user, 'gerente') and user.gerente and user.gerente.edificio:
+        return user.gerente.edificio
     return None
 
 class AlertaCreateView(CreateAPIView):
@@ -53,14 +59,11 @@ class AlertaViewSet(ModelViewSet):
         # Solo Admin y Gerente ven todas (filtradas); otros solo sus propias alertas
         if rol_nombre == 'Administrador':
             queryset = Alerta.objects.select_related('enviado_por', 'atendido_por')
-        elif rol_nombre == 'Gerente' and hasattr(user, 'gerente') and user.gerente and user.gerente.edificio:
-            from django.db.models import Q
-            edificio = user.gerente.edificio
+        elif rol_nombre == 'Gerente' and _edificio_de_gerente(user):
+            # Filtrar por el edificio de la alerta (no por el del autor): así
+            # también son visibles las alertas creadas por el agente/gerencia.
             queryset = Alerta.objects.select_related('enviado_por', 'atendido_por').filter(
-                Q(enviado_por__residente__vivienda__edificio=edificio) |
-                Q(enviado_por__vigilante__edificio=edificio) |
-                Q(enviado_por__empleado__edificio=edificio) |
-                Q(enviado_por__gerente__edificio=edificio)
+                edificio=_edificio_de_gerente(user)
             )
         else:
             queryset = Alerta.objects.select_related('enviado_por', 'atendido_por').filter(enviado_por=user)
@@ -136,15 +139,9 @@ def actualizar_estado_alerta(request, pk):
             )
         
         # Gerente solo puede actuar sobre alertas de su edificio
-        if request.user.rol.nombre == 'Gerente' and hasattr(request.user, 'gerente') and request.user.gerente and request.user.gerente.edificio:
-            from django.db.models import Q
-            edificio = request.user.gerente.edificio
-            if not Alerta.objects.filter(pk=pk).filter(
-                Q(enviado_por__residente__vivienda__edificio=edificio) |
-                Q(enviado_por__vigilante__edificio=edificio) |
-                Q(enviado_por__empleado__edificio=edificio) |
-                Q(enviado_por__gerente__edificio=edificio)
-            ).exists():
+        edificio_gerente = _edificio_de_gerente(request.user)
+        if request.user.rol.nombre == 'Gerente' and edificio_gerente:
+            if not Alerta.objects.filter(pk=pk, edificio=edificio_gerente).exists():
                 return Response({'error': 'No autorizado'}, status=status.HTTP_403_FORBIDDEN)
         
         nuevo_estado = request.data.get('estado')
@@ -188,18 +185,9 @@ def lista_alertas(request):
     
     alertas = Alerta.objects.all().order_by('-fecha')
 
-    # Gerente solo ve alertas de usuarios de su edificio
-    user = request.user
-    if hasattr(user, 'rol') and user.rol and user.rol.nombre == 'Gerente' and hasattr(user, 'gerente') and user.gerente.edificio:
-        from django.db.models import Q
-        from viviendas.models import Edificio
-        edificio = user.gerente.edificio
-        alertas = alertas.filter(
-            Q(enviado_por__residente__vivienda__edificio=edificio) |
-            Q(enviado_por__vigilante__edificio=edificio) |
-            Q(enviado_por__empleado__edificio=edificio) |
-            Q(enviado_por__gerente__edificio=edificio)
-        )
+    # Gerente solo ve alertas de su edificio
+    if rol_nombre == 'Gerente' and _edificio_de_gerente(user):
+        alertas = alertas.filter(edificio=_edificio_de_gerente(user))
     
     # Filtrar por usuario si se especifica
     user_id = request.GET.get('user_id')
@@ -240,17 +228,9 @@ def cambiar_estado_web(request, pk):
         alerta = Alerta.objects.get(pk=pk)
         
         # Gerente solo puede cambiar alertas de su edificio
-        if request.user.rol.nombre == 'Gerente' and hasattr(request.user, 'gerente') and request.user.gerente and request.user.gerente.edificio:
-            from django.db.models import Q
-            edificio = request.user.gerente.edificio
-            if not Alerta.objects.filter(
-                pk=pk
-            ).filter(
-                Q(enviado_por__residente__vivienda__edificio=edificio) |
-                Q(enviado_por__vigilante__edificio=edificio) |
-                Q(enviado_por__empleado__edificio=edificio) |
-                Q(enviado_por__gerente__edificio=edificio)
-            ).exists():
+        edificio_gerente = _edificio_de_gerente(request.user)
+        if request.user.rol.nombre == 'Gerente' and edificio_gerente:
+            if not Alerta.objects.filter(pk=pk, edificio=edificio_gerente).exists():
                 return JsonResponse({'error': 'No autorizado'}, status=403)
         
         # Parsear el JSON del body
@@ -369,14 +349,8 @@ def alertas_nuevas_web(request):
     alertas = Alerta.objects.filter(fecha__gt=since_dt).select_related('enviado_por', 'atendido_por')
 
     # Gerente: solo su edificio
-    if rol_nombre == 'Gerente' and hasattr(request.user, 'gerente') and request.user.gerente and request.user.gerente.edificio:
-        edificio = request.user.gerente.edificio
-        alertas = alertas.filter(
-            Q(enviado_por__residente__vivienda__edificio=edificio) |
-            Q(enviado_por__vigilante__edificio=edificio) |
-            Q(enviado_por__empleado__edificio=edificio) |
-            Q(enviado_por__gerente__edificio=edificio)
-        )
+    if rol_nombre == 'Gerente' and _edificio_de_gerente(request.user):
+        alertas = alertas.filter(edificio=_edificio_de_gerente(request.user))
 
     alertas = alertas.order_by('-fecha')[:20]
 

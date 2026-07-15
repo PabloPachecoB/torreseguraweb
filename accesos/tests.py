@@ -267,7 +267,8 @@ class VisitaViewsTest(TestCase):
     
     def test_registrar_salida_visita(self):
         """Verificar que el registro de salida funciona correctamente"""
-        response = self.client.get(reverse('visita-salida', args=[self.visita_activa.id]))
+        # La vista solo acepta POST; un GET redirige sin registrar nada
+        response = self.client.post(reverse('visita-salida', args=[self.visita_activa.id]))
         self.assertRedirects(response, reverse('visita-list'))
         
         # Verificar que se registró la salida
@@ -355,6 +356,11 @@ class MovimientoResidenteViewsTest(TestCase):
             'placa_vehiculo': ''
         }
         
+        # Cerrar la entrada activa del setUp: el formulario no permite
+        # registrar una entrada si el residente ya está dentro
+        self.movimiento.fecha_hora_salida = timezone.now()
+        self.movimiento.save()
+
         response = self.client.post(reverse('movimiento-entrada'), data)
         self.assertRedirects(response, reverse('movimiento-list'))
         

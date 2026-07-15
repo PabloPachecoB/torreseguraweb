@@ -36,6 +36,13 @@ def historial_visitas(request):
     if rol_nombre == 'Gerente' and hasattr(user, 'gerente') and user.gerente and user.gerente.edificio:
         visitas = visitas.filter(vivienda_destino__edificio=user.gerente.edificio)
 
+    # Vigilante solo ve visitas de su edificio asignado
+    if rol_nombre == 'Vigilante':
+        if hasattr(user, 'vigilante') and user.vigilante and user.vigilante.edificio:
+            visitas = visitas.filter(vivienda_destino__edificio=user.vigilante.edificio)
+        else:
+            visitas = visitas.none()
+
     visitas = visitas[:100]
     
     data = []

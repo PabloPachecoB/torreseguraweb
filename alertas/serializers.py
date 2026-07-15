@@ -14,6 +14,8 @@ class UserSerializer(serializers.ModelSerializer):
 class AlertaSerializer(serializers.ModelSerializer):
     enviado_por_info = UserSerializer(source='enviado_por', read_only=True)
     atendido_por_info = UserSerializer(source='atendido_por', read_only=True)
+    categoria_display = serializers.CharField(source='get_categoria_display', read_only=True)
+    prioridad_display = serializers.CharField(source='get_prioridad_display', read_only=True)
 
     class Meta:
         model = Alerta
@@ -22,8 +24,15 @@ class AlertaSerializer(serializers.ModelSerializer):
             'estado', 'atendido_por', 'fecha_atencion',
             'enviado_por_info', 'atendido_por_info',
             'edificio', 'vivienda',
+            'categoria', 'categoria_display', 'prioridad', 'prioridad_display',
+            'duplicado_de', 'requiere_atencion_manual',
         ]
-        read_only_fields = ['id', 'fecha', 'enviado_por']
+        # Los campos de incidencia los gestiona el agente (vía ORM), no la API:
+        # así un residente no puede auto-asignarse prioridad crítica.
+        read_only_fields = [
+            'id', 'fecha', 'enviado_por',
+            'categoria', 'prioridad', 'duplicado_de', 'requiere_atencion_manual',
+        ]
 
 
 class CrearAlertaSerializer(serializers.ModelSerializer):

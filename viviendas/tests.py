@@ -248,7 +248,8 @@ class EdificioViewsTest(TestCase):
         """Verificar que un usuario normal no puede crear un edificio"""
         self.client.login(username='normal', password='normalpassword')
         response = self.client.get(reverse('edificio-create'))
-        self.assertEqual(response.status_code, 403)  # Forbidden
+        # El mixin de acceso redirige al login en vez de devolver 403
+        self.assertEqual(response.status_code, 302)
     
     def test_edificio_update_view_admin(self):
         """Verificar que un administrador puede actualizar un edificio"""
@@ -450,48 +451,45 @@ class ResidenteViewsTest(TestCase):
     
     def test_residente_create_view(self):
         """Verificar que se puede crear un residente"""
-        # Modificar la prueba para evitar el renderizado completo de la plantilla
-        from unittest.mock import patch
-        
-        # Crear un usuario para el nuevo residente
-        User = get_user_model()
-        nuevo_usuario = User.objects.create_user(
-            username='nuevoresidente',
-            email='nuevoresidente@example.com',
-            password='password',
-            first_name='Carlos',
-            last_name='López'
-        )
-        
-        # En lugar de verificar la respuesta GET, vayamos directamente al POST
+        # El formulario crea el usuario automáticamente a partir de sus datos
         data = {
-            'usuario': nuevo_usuario.id,
+            'email': 'nuevoresidente@example.com',
+            'first_name': 'Carlos',
+            'last_name': 'López',
+            'telefono': '77777777',
+            'numero_documento': '1234567',
+            'edificio': self.edificio.id,
             'vivienda': self.vivienda.id,
             'vehiculos': 1,
             'es_propietario': False,
             'activo': True
         }
-        
+
         response = self.client.post(reverse('residente-create'), data)
         self.assertEqual(response.status_code, 302)  # Redirección
-        
-        # Verificar que se creó el residente
-        self.assertTrue(Residente.objects.filter(usuario=nuevo_usuario).exists())
+
+        # Verificar que se creó el residente (y su usuario asociado)
+        self.assertTrue(Residente.objects.filter(usuario__email='nuevoresidente@example.com').exists())
 
     def test_residente_update_view(self):
         """Verificar que se puede actualizar un residente"""
         # También modificamos esta prueba para evitar el renderizado de la plantilla
         # e ir directamente al POST
         
-        # Probar POST
+        # Probar POST (el formulario exige también los datos del usuario)
         data = {
-            'usuario': self.usuario_residente.id,
+            'email': 'residente@example.com',
+            'first_name': 'Laura',
+            'last_name': 'Gómez',
+            'telefono': '',
+            'numero_documento': '7654321',
+            'edificio': self.edificio.id,
             'vivienda': self.vivienda.id,
             'vehiculos': 3,  # Actualizar número de vehículos
             'es_propietario': True,
             'activo': True
         }
-        
+
         response = self.client.post(reverse('residente-update', args=[self.residente.id]), data)
         self.assertEqual(response.status_code, 302)  # Redirección
         

@@ -112,7 +112,9 @@ class UsuarioViewTest(TestCase):
         """Verificar que un usuario normal no puede acceder a la lista de usuarios"""
         self.client.login(username='normal', password='normalpassword')
         response = self.client.get(reverse('usuario-list'))
-        self.assertEqual(response.status_code, 403)  # Forbidden
+        # El mixin AccesoWebPermitidoMixin redirige al login en vez de devolver 403
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('login'), response.url)
     
     def test_change_state_view(self):
         """Verificar el funcionamiento correcto de la vista de cambio de estado"""

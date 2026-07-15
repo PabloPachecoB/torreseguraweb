@@ -11,11 +11,36 @@ from .models import AreaComun, Reserva
 from .serializers import AreaComunSerializer, ReservaSerializer
 
 
+def _edificio_del_usuario(user):
+    """Devuelve el edificio asociado al usuario según su rol, o None."""
+    if hasattr(user, "residente") and user.residente and user.residente.vivienda:
+        return user.residente.vivienda.edificio
+    if hasattr(user, "vigilante") and user.vigilante:
+        return user.vigilante.edificio
+    if hasattr(user, "gerente") and user.gerente:
+        return user.gerente.edificio
+    if hasattr(user, "empleado") and user.empleado:
+        return user.empleado.edificio
+    return None
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def listar_areas(request):
-    """Lista todas las areas comunes activas."""
+    """Lista las areas comunes activas del edificio del usuario.
+
+    Administradores ven todas; el resto solo las de su edificio.
+    """
     areas = AreaComun.objects.filter(activo=True).select_related("edificio")
+
+    rol = getattr(getattr(request.user, "rol", None), "nombre", None)
+    if not (request.user.is_superuser or rol == "Administrador"):
+        edificio = _edificio_del_usuario(request.user)
+        if edificio:
+            areas = areas.filter(edificio=edificio)
+        else:
+            areas = areas.none()
+
     serializer = AreaComunSerializer(areas, many=True, context={"request": request})
     return Response(serializer.data)
 

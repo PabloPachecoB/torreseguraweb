@@ -51,8 +51,15 @@ class VisitanteViewSet(viewsets.ModelViewSet):
             .order_by("-fecha_hora_entrada")
         )
 
-        if self._es_admin() or self._es_vigilante():
+        if self._es_admin():
             pass
+        elif self._es_vigilante():
+            # Vigilante solo ve visitas de su edificio asignado
+            vigilante = getattr(self.request.user, "vigilante", None)
+            if vigilante and vigilante.edificio_id:
+                qs = qs.filter(vivienda_destino__edificio_id=vigilante.edificio_id)
+            else:
+                qs = qs.none()
         elif self._es_residente():
             vivienda_id = getattr(self.request.user.residente, "vivienda_id", None)
             qs = qs.filter(vivienda_destino_id=vivienda_id)
