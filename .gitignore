@@ -34,6 +34,7 @@ media/
 
 mediafiles/
 staticfiles/
+inst/
 
 # Archivos de caché
 *.cache
