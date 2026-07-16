@@ -23,6 +23,9 @@ urlpatterns = [
     # Financiero (cuotas y pagos para app movil)
     path("financiero/", include("financiero.api_v1_urls")),
 
+    # Agente conversacional: revisar/confirmar/rechazar acciones (HU-01.2)
+    path("agente/", include("agente.api_v1_urls")),
+
     # Visitantes (gestión móvil)
     path("", include(router.urls)),
 ]
