@@ -49,6 +49,75 @@ class Visita(models.Model):
     def __str__(self):
         return f"{self.nombre_visitante} - {self.vivienda_destino} - {self.fecha_hora_entrada.strftime('%d/%m/%Y %H:%M')}"
 
+class Puerta(models.Model):
+    """Puerta controlable desde la app (principal, de edificio o de vivienda).
+
+    Si `webhook_url` está configurada, al abrir se envía la orden al hardware
+    (ESP32/relé/cerradura). Si está vacía, la apertura se registra y se
+    responde OK (modo software).
+    """
+    TIPO_PRINCIPAL = 'PRINCIPAL'
+    TIPO_EDIFICIO = 'EDIFICIO'
+    TIPO_VIVIENDA = 'VIVIENDA'
+    TIPOS = [
+        (TIPO_PRINCIPAL, 'Puerta principal'),
+        (TIPO_EDIFICIO, 'Puerta de edificio'),
+        (TIPO_VIVIENDA, 'Puerta de vivienda'),
+    ]
+
+    nombre = models.CharField(max_length=100)
+    tipo = models.CharField(max_length=10, choices=TIPOS)
+    edificio = models.ForeignKey(
+        'viviendas.Edificio', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='puertas',
+        help_text='Requerido si el tipo es Puerta de edificio.'
+    )
+    vivienda = models.ForeignKey(
+        Vivienda, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='puertas',
+        help_text='Requerido si el tipo es Puerta de vivienda.'
+    )
+    activa = models.BooleanField(default=True)
+    webhook_url = models.URLField(
+        blank=True, default='',
+        help_text='URL del dispositivo (ESP32/relé). Vacío = modo software.'
+    )
+
+    class Meta:
+        ordering = ['tipo', 'nombre']
+        verbose_name = 'Puerta'
+        verbose_name_plural = 'Puertas'
+
+    def clean(self):
+        if self.tipo == self.TIPO_EDIFICIO and not self.edificio:
+            raise ValidationError({'edificio': 'Una puerta de edificio debe tener edificio asignado.'})
+        if self.tipo == self.TIPO_VIVIENDA and not self.vivienda:
+            raise ValidationError({'vivienda': 'Una puerta de vivienda debe tener vivienda asignada.'})
+
+    def __str__(self):
+        return f"{self.nombre} ({self.get_tipo_display()})"
+
+
+class AperturaPuerta(models.Model):
+    puerta = models.ForeignKey(Puerta, on_delete=models.CASCADE, related_name='aperturas')
+    usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name='aperturas_puerta')
+    fecha_hora = models.DateTimeField(auto_now_add=True)
+    exito = models.BooleanField(default=True)
+    detalle = models.CharField(max_length=200, blank=True, default='')
+
+    class Meta:
+        ordering = ['-fecha_hora']
+        verbose_name = 'Apertura de puerta'
+        verbose_name_plural = 'Aperturas de puertas'
+        indexes = [
+            models.Index(fields=['puerta', '-fecha_hora']),
+            models.Index(fields=['usuario', '-fecha_hora']),
+        ]
+
+    def __str__(self):
+        return f"{self.puerta} - {self.usuario} - {self.fecha_hora.strftime('%d/%m/%Y %H:%M')}"
+
+
 class MovimientoResidente(models.Model):
     residente = models.ForeignKey(Residente, on_delete=models.CASCADE, related_name='movimientos')
     fecha_hora_entrada = models.DateTimeField(null=True, blank=True)
