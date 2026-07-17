@@ -49,12 +49,60 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
             payload = dict(self.get_serializer(accion).data)
             payload['conversation'] = conversation
             return Response(payload)
+
+        # HU-04.2 (LOCK-04): las acciones de cerradura exigen confirmación
+        # reforzada — segundo factor = re-autenticación con la contraseña.
+        if accion.tipo_accion.startswith('CERRADURA_'):
+            password = request.data.get('password', '')
+            if not password:
+                return Response(
+                    {'error': 'Confirmación reforzada: debes reingresar tu contraseña.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not request.user.check_password(password):
+                return Response(
+                    {'error': 'Contraseña incorrecta. La apertura no se ejecutó.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         try:
             accion.confirmar(request.user)
         except PermissionError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_403_FORBIDDEN)
         except ValueError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
+
+        # Ejecutar la apertura física tras la confirmación (HU-04.2 → 04.3).
+        if accion.tipo_accion == 'CERRADURA_ABRIR':
+            from accesos.api_puertas import ejecutar_apertura, _puertas_permitidas
+
+            try:
+                puerta = _puertas_permitidas(request.user).get(pk=accion.payload.get('puerta_id'))
+            except Exception:
+                accion.resultado = {'abierta': False, 'detalle': 'Puerta no encontrada o sin permiso.'}
+                accion.save(update_fields=['resultado'])
+                return Response(
+                    {'error': 'Puerta no encontrada o sin permiso.', 'accion': self.get_serializer(accion).data},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            exito, detalle = ejecutar_apertura(puerta, request.user)
+            accion.estado_previo = accion.estado
+            accion.estado = AgentAction.EJECUTADA
+            accion.resultado = {'abierta': exito, 'detalle': detalle}
+            accion.save(update_fields=['estado', 'estado_previo', 'resultado'])
+
+            # HU-04.3: nunca presentar un fallo como éxito.
+            return Response(
+                {
+                    'abierta': exito,
+                    'mensaje': f'{puerta.nombre} abierta correctamente.' if exito
+                               else 'La puerta no respondió. Intenta de nuevo.',
+                    'accion': self.get_serializer(accion).data,
+                },
+                status=status.HTTP_200_OK if exito else status.HTTP_502_BAD_GATEWAY,
+            )
+
         return Response(self.get_serializer(accion).data)
 
     @action(detail=True, methods=['post'])

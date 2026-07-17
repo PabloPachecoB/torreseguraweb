@@ -107,6 +107,11 @@ class VisitaCreateView(LoginRequiredMixin, BaseGerenteMixin, CreateView):
             return self.form_invalid(form)
         
         form.instance.registrado_por = self.request.user
+        # El registro desde la web siempre es un ingreso inmediato (no reserva a
+        # futuro) — fecha_hora_entrada dejo de auto-llenarse sola (ahora es nullable
+        # para soportar reservas), asi que hay que fijarla explicitamente acá.
+        form.instance.fecha_hora_entrada = timezone.now()
+        form.instance.estado = Visita.CONFIRMADA
         messages.success(self.request, f'Visita de {form.instance.nombre_visitante} registrada correctamente.')
         return super().form_valid(form)
     

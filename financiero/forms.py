@@ -173,6 +173,13 @@ class GenerarCuotasForm(forms.Form):
         initial=True,
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
     )
+    solo_ocupadas = forms.BooleanField(
+        label="Solo viviendas ocupadas",
+        required=False,
+        initial=True,
+        help_text="Evita generar cuotas a departamentos vacíos (recomendado).",
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'})
+    )
     fecha_emision = forms.DateField(
         label="Fecha de emisión",
         initial=timezone.now().date(),

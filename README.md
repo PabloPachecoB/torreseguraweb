@@ -35,8 +35,8 @@ Sistema web Django para la administracion integral de condominios verticales. In
 ### 1. Clonar y entrar al proyecto
 
 ```bash
-git clone https://github.com/Avillegasa/pilinmaster.git
-cd pilinmaster
+git clone "url del repo"
+cd backend
 ```
 
 ### 2. Crear y activar entorno virtual

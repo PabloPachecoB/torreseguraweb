@@ -496,3 +496,143 @@ class ResidenteViewsTest(TestCase):
         # Verificar que se actualizó el residente
         self.residente.refresh_from_db()
         self.assertEqual(self.residente.vehiculos, 3)
+
+class GeneradorViviendasTest(TestCase):
+    """Pruebas del servicio generar_viviendas (viviendas/services.py)."""
+
+    def setUp(self):
+        self.edificio = Edificio.objects.create(
+            nombre='Edificio Gen', direccion='Calle Test 1', pisos=3,
+            esquema_numeracion='PISO_LETRA', deptos_por_piso=2,
+        )
+
+    def test_malla_completa_piso_letra(self):
+        from .services import generar_viviendas
+        r = generar_viviendas(self.edificio)
+        self.assertEqual(len(r['creadas']), 6)  # 3 pisos x 2
+        self.assertIn('1-A', r['creadas'])
+        self.assertIn('3-B', r['creadas'])
+        self.assertEqual(r['errores'], [])
+        self.assertEqual(Vivienda.objects.filter(edificio=self.edificio).count(), 6)
+        # todas desocupadas y con piso correcto
+        v = Vivienda.objects.get(edificio=self.edificio, numero='2-A')
+        self.assertEqual(v.piso, 2)
+        self.assertEqual(v.estado, 'DESOCUPADO')
+
+    def test_idempotente(self):
+        from .services import generar_viviendas
+        generar_viviendas(self.edificio)
+        r2 = generar_viviendas(self.edificio)
+        self.assertEqual(len(r2['creadas']), 0)
+        self.assertEqual(len(r2['existentes']), 6)
+        self.assertEqual(Vivienda.objects.filter(edificio=self.edificio).count(), 6)
+
+    def test_no_toca_manuales(self):
+        from .services import generar_viviendas
+        manual = Vivienda.objects.create(
+            edificio=self.edificio, numero='65', piso=1,
+            metros_cuadrados=80, habitaciones=3, baños=2,
+        )
+        r = generar_viviendas(self.edificio)
+        manual.refresh_from_db()
+        self.assertEqual(manual.numero, '65')  # intacta
+        self.assertEqual(len(r['creadas']), 6)  # el generador agrega las suyas
+        self.assertEqual(Vivienda.objects.filter(edificio=self.edificio).count(), 7)
+
+    def test_dry_run_no_escribe(self):
+        from .services import generar_viviendas
+        r = generar_viviendas(self.edificio, dry_run=True)
+        self.assertTrue(r['dry_run'])
+        self.assertEqual(len(r['creadas']), 6)
+        self.assertEqual(Vivienda.objects.filter(edificio=self.edificio).count(), 0)
+
+    def test_esquema_piso_unidad(self):
+        from .services import generar_viviendas
+        self.edificio.esquema_numeracion = 'PISO_UNIDAD'
+        self.edificio.save()
+        r = generar_viviendas(self.edificio)
+        self.assertIn('101', r['creadas'])
+        self.assertIn('302', r['creadas'])
+
+    def test_esquema_manual_rechazado(self):
+        from .services import generar_viviendas
+        self.edificio.esquema_numeracion = 'MANUAL'
+        self.edificio.save()
+        with self.assertRaises(ValueError):
+            generar_viviendas(self.edificio)
+
+    def test_topes_de_volumen(self):
+        from .services import generar_viviendas
+        with self.assertRaises(ValueError):
+            generar_viviendas(self.edificio, deptos_por_piso=13)  # > MAX_DEPTOS_POR_PISO
+        gigante = Edificio.objects.create(
+            nombre='Gigante', direccion='x', pisos=61,
+            esquema_numeracion='PISO_LETRA', deptos_por_piso=2,
+        )
+        with self.assertRaises(ValueError):
+            generar_viviendas(gigante)
+        self.assertEqual(Vivienda.objects.filter(edificio=gigante).count(), 0)
+
+    def test_crear_puertas_sin_pisar_hardware(self):
+        from .services import generar_viviendas
+        from accesos.models import Puerta
+        generar_viviendas(self.edificio, crear_puertas=True)
+        self.assertEqual(
+            Puerta.objects.filter(vivienda__edificio=self.edificio).count(), 6
+        )
+        # segunda corrida no duplica puertas ni toca webhook
+        p = Puerta.objects.get(vivienda__numero='1-A', vivienda__edificio=self.edificio)
+        p.webhook_url = 'http://192.168.0.50/abrir/test'
+        p.save()
+        generar_viviendas(self.edificio, crear_puertas=True)
+        p.refresh_from_db()
+        self.assertEqual(p.webhook_url, 'http://192.168.0.50/abrir/test')
+        self.assertEqual(
+            Puerta.objects.filter(vivienda__edificio=self.edificio).count(), 6
+        )
+
+
+class EdificioCreateConGeneracionTest(TestCase):
+    """Flujo web: crear edificio con generación automática de departamentos."""
+
+    def setUp(self):
+        rol_admin, _ = Rol.objects.get_or_create(nombre='Administrador')
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='admin.gen', password='clave123', rol=rol_admin
+        )
+
+    def test_crear_edificio_generando_departamentos(self):
+        self.client.login(username='admin.gen', password='clave123')
+        data = {
+            'nombre': 'Torre Auto',
+            'direccion': 'Av. Generada 1',
+            'pisos': 5,
+            'esquema_numeracion': 'PISO_LETRA',
+            'deptos_por_piso': 2,
+            'generar_viviendas_auto': 'on',
+        }
+        response = self.client.post(reverse('edificio-create'), data)
+        self.assertEqual(response.status_code, 302)
+        ed = Edificio.objects.get(nombre='Torre Auto')
+        self.assertEqual(ed.viviendas.count(), 10)  # 5 pisos x 2
+        self.assertTrue(ed.viviendas.filter(numero='5-B').exists())
+
+    def test_crear_edificio_sin_generar_sigue_igual(self):
+        self.client.login(username='admin.gen', password='clave123')
+        data = {'nombre': 'Torre Manual', 'direccion': 'x', 'pisos': 4}
+        response = self.client.post(reverse('edificio-create'), data)
+        self.assertEqual(response.status_code, 302)
+        ed = Edificio.objects.get(nombre='Torre Manual')
+        self.assertEqual(ed.viviendas.count(), 0)
+        self.assertEqual(ed.esquema_numeracion, 'MANUAL')
+
+    def test_generar_sin_esquema_da_error_de_form(self):
+        self.client.login(username='admin.gen', password='clave123')
+        data = {
+            'nombre': 'Torre Mal', 'direccion': 'x', 'pisos': 4,
+            'generar_viviendas_auto': 'on',  # sin esquema ni deptos_por_piso
+        }
+        response = self.client.post(reverse('edificio-create'), data)
+        self.assertEqual(response.status_code, 200)  # se queda en el form con errores
+        self.assertFalse(Edificio.objects.filter(nombre='Torre Mal').exists())

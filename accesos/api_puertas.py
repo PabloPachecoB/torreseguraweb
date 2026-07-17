@@ -76,17 +76,13 @@ def listar_puertas(request):
     return Response([_serializar_puerta(p) for p in puertas])
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def abrir_puerta(request, puerta_id):
-    try:
-        puerta = _puertas_permitidas(request.user).get(pk=puerta_id)
-    except Puerta.DoesNotExist:
-        return Response(
-            {'abierta': False, 'mensaje': 'Puerta no encontrada o sin permiso para abrirla.'},
-            status=403,
-        )
+def ejecutar_apertura(puerta, usuario):
+    """Ejecuta la apertura física (webhook al ESP32 o modo software) y la
+    registra en la bitácora. Devuelve (exito, detalle).
 
+    HU-04.3: nunca fingir éxito — un timeout o error de red se reporta como
+    fallo, jamás como apertura correcta.
+    """
     exito = True
     detalle = 'Apertura en modo software (sin hardware conectado).'
 
@@ -98,31 +94,74 @@ def abrir_puerta(request, puerta_id):
         try:
             resp = requests.post(
                 puerta.webhook_url,
-                json={'accion': 'abrir', 'puerta_id': puerta.id, 'usuario': request.user.username},
+                json={'accion': 'abrir', 'puerta_id': puerta.id, 'usuario': usuario.username},
                 headers=headers,
                 timeout=WEBHOOK_TIMEOUT,
             )
             exito = resp.ok
             detalle = f'Hardware respondió HTTP {resp.status_code}.'
+        except requests.Timeout:
+            exito = False
+            detalle = 'Timeout: el hardware no respondió a tiempo.'
         except requests.RequestException as e:
             exito = False
             detalle = f'No se pudo contactar el hardware: {type(e).__name__}'
 
     AperturaPuerta.objects.create(
         puerta=puerta,
-        usuario=request.user,
+        usuario=usuario,
         exito=exito,
         detalle=detalle[:200],
     )
+    return exito, detalle
 
-    if not exito:
-        return Response({'abierta': False, 'mensaje': 'La puerta no respondió. Intenta de nuevo.'}, status=502)
 
-    return Response({
-        'abierta': True,
-        'mensaje': f'{puerta.nombre} abierta correctamente.',
-        'puerta': _serializar_puerta(puerta),
-    })
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def abrir_puerta(request, puerta_id):
+    """Paso 1 de HU-04.2: solicita la apertura.
+
+    No abre nada todavía: valida permiso + demo controlada y crea una
+    AgentAction PENDIENTE (tipo CERRADURA_ABRIR) que el usuario debe
+    confirmar con su contraseña (segundo factor) en
+    POST /api/v1/agente/acciones/<id>/confirmar/.
+    """
+    try:
+        puerta = _puertas_permitidas(request.user).get(pk=puerta_id)
+    except Puerta.DoesNotExist:
+        return Response(
+            {'abierta': False, 'mensaje': 'Puerta no encontrada o sin permiso para abrirla.'},
+            status=403,
+        )
+
+    # LOCK-04: la apertura remota solo funciona en demo controlada.
+    if not puerta.habilitada_para_demo:
+        return Response(
+            {'abierta': False, 'mensaje': 'Esta puerta no está habilitada para apertura remota (demo controlada).'},
+            status=403,
+        )
+
+    from datetime import timedelta
+    from django.utils import timezone
+    from agente.models import AgentAction
+
+    accion = AgentAction.objects.create(
+        usuario=request.user,
+        tipo_accion='CERRADURA_ABRIR',
+        payload={'puerta_id': puerta.id, 'puerta_nombre': puerta.nombre},
+        expira_en=timezone.now() + timedelta(minutes=5),
+    )
+
+    return Response(
+        {
+            'abierta': False,
+            'requiere_confirmacion': True,
+            'accion_id': accion.id,
+            'mensaje': f'Confirma la apertura de {puerta.nombre} con tu contraseña.',
+            'puerta': _serializar_puerta(puerta),
+        },
+        status=202,
+    )
 
 
 @api_view(['GET'])
