@@ -618,3 +618,49 @@ class AperturaConfirmacionReforzadaTest(TestCase):
         # el queryset del viewset solo expone acciones propias -> 404
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(AperturaPuerta.objects.count(), 0)
+
+
+class RegresionFixesReviewTest(TestCase):
+    """Regresiones de la revisión 2026-07-17 (bugs #1 y #7)."""
+
+    def setUp(self):
+        from usuarios.models import Rol
+        User = get_user_model()
+        rol_res, _ = Rol.objects.get_or_create(nombre='Residente')
+        self.edif = Edificio.objects.create(nombre='Edi Reg', direccion='x', pisos=5)
+        self.viv = Vivienda.objects.create(
+            edificio=self.edif, numero='1-A', piso=1,
+            metros_cuadrados=60, habitaciones=2, baños=1,
+        )
+        self.user = User.objects.create_user(username='reg.res', password='clave.reg1', rol=rol_res)
+        self.res = Residente.objects.create(usuario=self.user, vivienda=self.viv, activo=True)
+
+    def test_str_visita_reservada_sin_entrada_no_crashea(self):
+        """Bug #1: str() de una visita RESERVADA (fecha_hora_entrada null) no debe reventar."""
+        from datetime import date, time
+        v = Visita.objects.create(
+            nombre_visitante='Grupo Cumple', documento_visitante='99887766',
+            vivienda_destino=self.viv, residente_autoriza=self.res,
+            cantidad_personas=5, fecha_visita=date(2026, 12, 25),
+            hora_inicio=time(15, 0), hora_fin=time(20, 0),
+            estado=Visita.RESERVADA, fecha_hora_entrada=None,
+        )
+        texto = str(v)  # antes: AttributeError
+        self.assertIn('Grupo Cumple', texto)
+        self.assertIn('reserva', texto)
+
+    def test_abrir_reusa_accion_pendiente(self):
+        """Bug #7: tocar 'Abrir' dos veces no crea dos acciones pendientes."""
+        from agente.models import AgentAction
+        puerta = Puerta.objects.create(
+            nombre='1-A', tipo=Puerta.TIPO_VIVIENDA, vivienda=self.viv,
+            habilitada_para_demo=True,
+        )
+        self.client.force_login(self.user)
+        r1 = self.client.post(f'/api/v1/accesos/puertas/{puerta.id}/abrir/')
+        r2 = self.client.post(f'/api/v1/accesos/puertas/{puerta.id}/abrir/')
+        self.assertEqual(r1.json()['accion_id'], r2.json()['accion_id'])
+        self.assertEqual(
+            AgentAction.objects.filter(usuario=self.user, tipo_accion='CERRADURA_ABRIR').count(),
+            1,
+        )

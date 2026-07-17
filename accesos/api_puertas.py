@@ -145,12 +145,27 @@ def abrir_puerta(request, puerta_id):
     from django.utils import timezone
     from agente.models import AgentAction
 
-    accion = AgentAction.objects.create(
-        usuario=request.user,
-        tipo_accion='CERRADURA_ABRIR',
-        payload={'puerta_id': puerta.id, 'puerta_nombre': puerta.nombre},
-        expira_en=timezone.now() + timedelta(minutes=5),
+    # Reusar una solicitud pendiente reciente de esta misma puerta/usuario en
+    # vez de acumular acciones colgando si el residente toca "Abrir" varias veces.
+    ahora = timezone.now()
+    accion = (
+        AgentAction.objects.filter(
+            usuario=request.user,
+            tipo_accion='CERRADURA_ABRIR',
+            estado=AgentAction.PENDIENTE,
+            payload__puerta_id=puerta.id,
+            expira_en__gt=ahora,
+        )
+        .order_by('-fecha_creacion')
+        .first()
     )
+    if accion is None:
+        accion = AgentAction.objects.create(
+            usuario=request.user,
+            tipo_accion='CERRADURA_ABRIR',
+            payload={'puerta_id': puerta.id, 'puerta_nombre': puerta.nombre},
+            expira_en=ahora + timedelta(minutes=5),
+        )
 
     return Response(
         {

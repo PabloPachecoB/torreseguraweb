@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -25,11 +26,11 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
 
     @action(detail=True, methods=['post'])
     def confirmar(self, request, pk=None):
-        accion = self.get_object()
-
         # HU-04.2 (LOCK-04): las acciones de cerradura exigen confirmación
         # reforzada — segundo factor = re-autenticación con la contraseña.
-        if accion.tipo_accion.startswith('CERRADURA_'):
+        # Se valida ANTES de tomar el lock para no bloquear filas en balde.
+        accion_preview = self.get_object()
+        if accion_preview.tipo_accion.startswith('CERRADURA_'):
             password = request.data.get('password', '')
             if not password:
                 return Response(
@@ -42,45 +43,53 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-        try:
-            accion.confirmar(request.user)
-        except PermissionError as exc:
-            return Response({'error': str(exc)}, status=status.HTTP_403_FORBIDDEN)
-        except ValueError as exc:
-            return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
-
-        # Ejecutar la apertura física tras la confirmación (HU-04.2 → 04.3).
-        if accion.tipo_accion == 'CERRADURA_ABRIR':
-            from accesos.api_puertas import ejecutar_apertura, _puertas_permitidas
-
+        # Lock de fila + atomicidad: evita que dos confirmaciones concurrentes
+        # (doble tap / reintento de red) ejecuten la acción dos veces.
+        with transaction.atomic():
+            accion = (
+                AgentAction.objects.select_for_update()
+                .filter(usuario=request.user)
+                .get(pk=accion_preview.pk)
+            )
             try:
-                puerta = _puertas_permitidas(request.user).get(pk=accion.payload.get('puerta_id'))
-            except Exception:
-                accion.resultado = {'abierta': False, 'detalle': 'Puerta no encontrada o sin permiso.'}
-                accion.save(update_fields=['resultado'])
+                accion.confirmar(request.user)
+            except PermissionError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+            except ValueError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
+
+            # Ejecutar la apertura física tras la confirmación (HU-04.2 → 04.3).
+            if accion.tipo_accion == 'CERRADURA_ABRIR':
+                from accesos.api_puertas import ejecutar_apertura, _puertas_permitidas
+
+                try:
+                    puerta = _puertas_permitidas(request.user).get(pk=accion.payload.get('puerta_id'))
+                except Exception:
+                    accion.resultado = {'abierta': False, 'detalle': 'Puerta no encontrada o sin permiso.'}
+                    accion.save(update_fields=['resultado'])
+                    return Response(
+                        {'error': 'Puerta no encontrada o sin permiso.', 'accion': self.get_serializer(accion).data},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+                exito, detalle = ejecutar_apertura(puerta, request.user)
+                accion.estado_previo = accion.estado
+                accion.estado = AgentAction.EJECUTADA
+                accion.resultado = {'abierta': exito, 'detalle': detalle}
+                accion.save(update_fields=['estado', 'estado_previo', 'resultado'])
+
+                # HU-04.3: nunca presentar un fallo como éxito.
                 return Response(
-                    {'error': 'Puerta no encontrada o sin permiso.', 'accion': self.get_serializer(accion).data},
-                    status=status.HTTP_403_FORBIDDEN,
+                    {
+                        'abierta': exito,
+                        'mensaje': f'{puerta.nombre} abierta correctamente.' if exito
+                                   else 'La puerta no respondió. Intenta de nuevo.',
+                        'accion': self.get_serializer(accion).data,
+                    },
+                    status=status.HTTP_200_OK if exito else status.HTTP_502_BAD_GATEWAY,
                 )
 
-            exito, detalle = ejecutar_apertura(puerta, request.user)
-            accion.estado_previo = accion.estado
-            accion.estado = AgentAction.EJECUTADA
-            accion.resultado = {'abierta': exito, 'detalle': detalle}
-            accion.save(update_fields=['estado', 'estado_previo', 'resultado'])
-
-            # HU-04.3: nunca presentar un fallo como éxito.
-            return Response(
-                {
-                    'abierta': exito,
-                    'mensaje': f'{puerta.nombre} abierta correctamente.' if exito
-                               else 'La puerta no respondió. Intenta de nuevo.',
-                    'accion': self.get_serializer(accion).data,
-                },
-                status=status.HTTP_200_OK if exito else status.HTTP_502_BAD_GATEWAY,
-            )
-
-        return Response(self.get_serializer(accion).data)
+            return Response(self.get_serializer(accion).data)
 
     @action(detail=True, methods=['post'])
     def rechazar(self, request, pk=None):
