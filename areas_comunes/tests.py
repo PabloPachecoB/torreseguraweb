@@ -110,3 +110,52 @@ class DisponibilidadApiTest(TestCase):
         client = APIClient()
         response = client.get(self._url(), {'fecha': self.manana.isoformat()})
         self.assertEqual(response.status_code, 401)
+
+
+class CrearReservaApiTest(TestCase):
+    def setUp(self):
+        self.edificio = Edificio.objects.create(nombre='Torre Test', direccion='Calle 1', pisos=5)
+        self.otro_edificio = Edificio.objects.create(nombre='Torre Otra', direccion='Calle 2', pisos=3)
+
+        self.vivienda = Vivienda.objects.create(
+            edificio=self.edificio, numero='101', piso=1, metros_cuadrados=80,
+        )
+
+        rol_residente, _ = Rol.objects.get_or_create(nombre='Residente')
+        self.usuario = Usuario.objects.create_user(username='carlos_t', password='clave123')
+        self.usuario.rol = rol_residente
+        self.usuario.save()
+        self.residente = Residente.objects.create(usuario=self.usuario, vivienda=self.vivienda)
+
+        self.area_propia = AreaComun.objects.create(
+            nombre='Salon de eventos', edificio=self.edificio,
+            horario_inicio='08:00', horario_fin='20:00',
+        )
+        self.area_otro_edificio = AreaComun.objects.create(
+            nombre='Piscina', edificio=self.otro_edificio,
+            horario_inicio='08:00', horario_fin='20:00',
+        )
+
+        self.client = APIClient()
+        self.client.force_authenticate(self.usuario)
+        self.manana = date.today() + timedelta(days=1)
+
+    def _url(self, area_id):
+        return reverse('api_v1_crear_reserva', kwargs={'area_id': area_id})
+
+    def test_puede_reservar_area_de_su_propio_edificio(self):
+        response = self.client.post(
+            self._url(self.area_propia.pk),
+            {'fecha': self.manana.isoformat(), 'hora_inicio': '09:00', 'hora_fin': '10:00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+
+    def test_no_puede_reservar_area_de_otro_edificio(self):
+        response = self.client.post(
+            self._url(self.area_otro_edificio.pk),
+            {'fecha': self.manana.isoformat(), 'hora_inicio': '09:00', 'hora_fin': '10:00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(Reserva.objects.filter(area_comun=self.area_otro_edificio).count(), 0)

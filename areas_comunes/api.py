@@ -122,9 +122,8 @@ def crear_reserva(request, area_id):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    try:
-        area = AreaComun.objects.get(pk=area_id, activo=True)
-    except AreaComun.DoesNotExist:
+    area = _area_del_usuario_o_none(request, area_id)
+    if area is None:
         return Response(
             {"mensaje": "Area comun no encontrada."},
             status=status.HTTP_404_NOT_FOUND,
