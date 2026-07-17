@@ -17,6 +17,30 @@ from django.db import transaction
 
 from .models import Edificio, Vivienda
 
+
+def edificios_administrados(user):
+    """Queryset de edificios que el usuario administra.
+
+    - Administrador/superuser: todos.
+    - Gerente con condominio: todas las torres de su condominio.
+    - Gerente sin condominio: su edificio único (comportamiento histórico).
+    - Otros roles: ninguno.
+
+    Punto único de verdad para el alcance del gerente: el refactor gradual
+    de los usos directos de `user.gerente.edificio` debe apuntar aquí.
+    """
+    rol = getattr(getattr(user, 'rol', None), 'nombre', None)
+    if user.is_superuser or rol == 'Administrador':
+        return Edificio.objects.all()
+    gerente = getattr(user, 'gerente', None)
+    if gerente is None:
+        return Edificio.objects.none()
+    if gerente.condominio_id:
+        return Edificio.objects.filter(condominio=gerente.condominio)
+    if gerente.edificio_id:
+        return Edificio.objects.filter(pk=gerente.edificio_id)
+    return Edificio.objects.none()
+
 # Topes duros para evitar generar miles de filas por un typo
 MAX_PISOS = 60
 MAX_DEPTOS_POR_PISO = 12

@@ -185,6 +185,14 @@ class ClientePotencial(models.Model):
 class Gerente(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, related_name='gerente')
     edificio = models.ForeignKey(Edificio, on_delete=models.PROTECT, related_name='gerentes')
+    # Transición a alcance por condominio (varias torres del mismo lugar).
+    # Si está definido, el gerente administra TODAS las torres del condominio;
+    # `edificio` queda como torre "principal" por compatibilidad con el código
+    # existente. Ver viviendas/services.py::edificios_administrados().
+    condominio = models.ForeignKey(
+        'viviendas.Condominio', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='gerentes',
+    )
 
     def clean(self):
         super().clean()

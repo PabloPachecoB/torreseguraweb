@@ -3,7 +3,16 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from .models import Edificio, Vivienda, Residente
+from .models import Condominio, Edificio, Vivienda, Residente
+
+@admin.register(Condominio)
+class CondominioAdmin(admin.ModelAdmin):
+    list_display = ['nombre', 'direccion', 'total_torres', 'activo']
+    search_fields = ['nombre', 'direccion']
+
+    def total_torres(self, obj):
+        return obj.get_total_torres()
+    total_torres.short_description = 'Torres'
 
 @admin.register(Edificio)
 class EdificioAdmin(admin.ModelAdmin):
