@@ -2,10 +2,11 @@ from django.test import TestCase, Client
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from rest_framework.test import APIClient
 from .models import Visita, MovimientoResidente
 from usuarios.models import Rol
 from viviendas.models import Edificio, Vivienda, Residente
-from datetime import timedelta
+from datetime import date, timedelta
 
 class VisitaModelTest(TestCase):
     """
@@ -395,6 +396,129 @@ class MovimientoResidenteViewsTest(TestCase):
         self.assertIsNotNone(nuevo_movimiento.fecha_hora_salida)
         self.assertTrue(nuevo_movimiento.vehiculo)
         self.assertEqual(nuevo_movimiento.placa_vehiculo, 'XYZ789')
+
+
+class ReservaVisitaApiTest(TestCase):
+    """Reserva de visitas a futuro con cantidad de personas y ventana horaria."""
+
+    def setUp(self):
+        self.rol_residente, _ = Rol.objects.get_or_create(nombre='Residente')
+        self.rol_vigilante, _ = Rol.objects.get_or_create(nombre='Vigilante')
+
+        User = get_user_model()
+        self.usuario_residente = User.objects.create_user(
+            username='residente_r', password='clave123', rol=self.rol_residente,
+        )
+        self.vigilante_user = User.objects.create_user(
+            username='vigilante_r', password='clave123', rol=self.rol_vigilante,
+        )
+
+        self.edificio = Edificio.objects.create(nombre='Torre Test', direccion='Calle 1', pisos=5)
+        self.vivienda = Vivienda.objects.create(
+            edificio=self.edificio, numero='201', piso=2, metros_cuadrados=80,
+        )
+        self.residente = Residente.objects.create(usuario=self.usuario_residente, vivienda=self.vivienda)
+
+        self.client = APIClient()
+        self.manana = date.today() + timedelta(days=1)
+
+    def _reservar(self, **overrides):
+        data = {
+            'nombre_visitante': 'Juan Perez',
+            'documento_visitante': '1234567',
+            'vivienda_destino_id': self.vivienda.id,
+            'cantidad_personas': 3,
+            'fecha_visita': self.manana.isoformat(),
+            'hora_inicio': '13:00',
+            'hora_fin': '15:00',
+        }
+        data.update(overrides)
+        self.client.force_authenticate(self.usuario_residente)
+        return self.client.post(reverse('api_v1_crear_visita'), data, format='json')
+
+    def test_reservar_a_futuro_crea_visita_reservada(self):
+        response = self._reservar()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['estado'], Visita.RESERVADA)
+        visita = Visita.objects.get(pk=response.data['id'])
+        self.assertIsNone(visita.fecha_hora_entrada)
+        self.assertEqual(visita.cantidad_personas, 3)
+
+    def test_sin_campos_de_reserva_mantiene_comportamiento_inmediato(self):
+        response = self._reservar(fecha_visita=None, hora_inicio=None, hora_fin=None)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['estado'], Visita.CONFIRMADA)
+        visita = Visita.objects.get(pk=response.data['id'])
+        self.assertIsNotNone(visita.fecha_hora_entrada)
+
+    def test_falta_hora_fin_da_400_con_campos_faltantes(self):
+        response = self._reservar(hora_fin=None)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('hora_fin', response.data['campos_faltantes'])
+
+    def test_cantidad_personas_invalida_da_400(self):
+        response = self._reservar(cantidad_personas=0)
+        self.assertEqual(response.status_code, 400)
+
+    def _verificar_qr(self, visita):
+        self.client.force_authenticate(self.vigilante_user)
+        return self.client.post(
+            reverse('api_v1_verificar_qr_visita'),
+            {'id': visita.id, 'nonce': visita.qr_nonce, 'firma': self._firma(visita)},
+            format='json',
+        )
+
+    def _firma(self, visita):
+        from .qr_firma_utils import generar_firma_qr
+        return generar_firma_qr(visita.id, nonce=visita.qr_nonce)
+
+    def test_verificar_dentro_de_ventana_confirma_ingreso(self):
+        ahora = timezone.localtime()
+        visita = Visita.objects.create(
+            nombre_visitante='Juan Perez', documento_visitante='1234567',
+            vivienda_destino=self.vivienda, residente_autoriza=self.residente,
+            cantidad_personas=4, estado=Visita.RESERVADA,
+            fecha_visita=ahora.date(),
+            hora_inicio=(ahora - timedelta(minutes=30)).time(),
+            hora_fin=(ahora + timedelta(minutes=30)).time(),
+        )
+        response = self._verificar_qr(visita)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['valido'])
+        self.assertEqual(response.data['cantidad_personas'], 4)
+        visita.refresh_from_db()
+        self.assertEqual(visita.estado, Visita.CONFIRMADA)
+        self.assertIsNotNone(visita.fecha_hora_entrada)
+
+    def test_verificar_antes_de_hora_inicio_da_403(self):
+        ahora = timezone.localtime()
+        visita = Visita.objects.create(
+            nombre_visitante='Juan Perez', documento_visitante='1234567',
+            vivienda_destino=self.vivienda, residente_autoriza=self.residente,
+            estado=Visita.RESERVADA,
+            fecha_visita=ahora.date(),
+            hora_inicio=(ahora + timedelta(hours=1)).time(),
+            hora_fin=(ahora + timedelta(hours=2)).time(),
+        )
+        response = self._verificar_qr(visita)
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.data['valido'])
+
+    def test_verificar_despues_de_hora_fin_da_403_y_expira(self):
+        ahora = timezone.localtime()
+        visita = Visita.objects.create(
+            nombre_visitante='Juan Perez', documento_visitante='1234567',
+            vivienda_destino=self.vivienda, residente_autoriza=self.residente,
+            estado=Visita.RESERVADA,
+            fecha_visita=ahora.date(),
+            hora_inicio=(ahora - timedelta(hours=2)).time(),
+            hora_fin=(ahora - timedelta(hours=1)).time(),
+        )
+        response = self._verificar_qr(visita)
+        self.assertEqual(response.status_code, 403)
+        visita.refresh_from_db()
+        self.assertEqual(visita.estado, Visita.EXPIRADA)
+
 
 from accesos.models import Puerta, AperturaPuerta
 
