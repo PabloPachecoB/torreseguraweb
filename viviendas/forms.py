@@ -12,7 +12,9 @@ from django.core.exceptions import ObjectDoesNotExist
 class EdificioForm(forms.ModelForm):
     class Meta:
         model = Edificio
-        fields = '__all__'
+        # Config del generador de viviendas (esquema_numeracion, deptos_por_piso)
+        # se gestiona desde el admin de Django, donde vive la acción de generar.
+        exclude = ['esquema_numeracion', 'deptos_por_piso']
         widgets = {
             'fecha_construccion': forms.DateInput(attrs={'type': 'date'})
         }

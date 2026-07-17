@@ -7,10 +7,24 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 class Edificio(models.Model):
+    ESQUEMAS_NUMERACION = [
+        ('PISO_LETRA', 'Piso-Letra (1-A, 2-B)'),
+        ('PISO_UNIDAD', 'Piso+Unidad (101, 202)'),
+        ('CORRELATIVO', 'Correlativo (1, 2… / 001…)'),
+        ('MANUAL', 'Manual (sin generador)'),
+    ]
+
     nombre = models.CharField(max_length=100)
     direccion = models.TextField()
     pisos = models.PositiveIntegerField()
     fecha_construccion = models.DateField(blank=True, null=True)
+    esquema_numeracion = models.CharField(
+        max_length=12, choices=ESQUEMAS_NUMERACION, default='MANUAL',
+        help_text='Convención de numeración que usa el generador de viviendas.'
+    )
+    deptos_por_piso = models.PositiveIntegerField(
+        default=0, help_text='Departamentos por piso para el generador (0 = manual).'
+    )
     
     def __str__(self):
         return self.nombre

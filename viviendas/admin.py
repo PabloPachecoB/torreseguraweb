@@ -7,10 +7,44 @@ from .models import Edificio, Vivienda, Residente
 
 @admin.register(Edificio)
 class EdificioAdmin(admin.ModelAdmin):
-    list_display = ['nombre', 'direccion', 'pisos', 'total_viviendas', 'porcentaje_ocupacion', 'fecha_construccion']
-    list_filter = ['pisos', 'fecha_construccion']
+    list_display = ['nombre', 'direccion', 'pisos', 'esquema_numeracion', 'deptos_por_piso', 'total_viviendas', 'porcentaje_ocupacion', 'fecha_construccion']
+    list_filter = ['pisos', 'esquema_numeracion', 'fecha_construccion']
     search_fields = ['nombre', 'direccion']
     ordering = ['nombre']
+    actions = ['previsualizar_generacion', 'generar_viviendas_accion']
+
+    @admin.action(description='Previsualizar generación de viviendas (dry-run, no crea nada)')
+    def previsualizar_generacion(self, request, queryset):
+        from .services import generar_viviendas
+        for edificio in queryset:
+            try:
+                r = generar_viviendas(edificio, dry_run=True)
+            except ValueError as e:
+                self.message_user(request, f'{edificio.nombre}: {e}', level='error')
+                continue
+            self.message_user(
+                request,
+                f'{edificio.nombre} (dry-run): se crearían {len(r["creadas"])} viviendas, '
+                f'{len(r["existentes"])} ya existen, {len(r["errores"])} con error. '
+                f'Ejemplos: {", ".join(r["creadas"][:8])}{"…" if len(r["creadas"]) > 8 else ""}'
+            )
+
+    @admin.action(description='Generar viviendas según esquema del edificio (crea puertas software)')
+    def generar_viviendas_accion(self, request, queryset):
+        from .services import generar_viviendas
+        for edificio in queryset:
+            try:
+                r = generar_viviendas(edificio, crear_puertas=True)
+            except ValueError as e:
+                self.message_user(request, f'{edificio.nombre}: {e}', level='error')
+                continue
+            nivel = 'warning' if r['errores'] else 'success'
+            self.message_user(
+                request,
+                f'{edificio.nombre}: {len(r["creadas"])} viviendas creadas, '
+                f'{len(r["existentes"])} ya existían, {len(r["errores"])} errores.',
+                level=nivel,
+            )
     
     def total_viviendas(self, obj):
         return obj.get_total_viviendas()
