@@ -1,8 +1,8 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Dashboard | Sistema de Administración de Condominios{% endblock %}
-{% block header %}Dashboard{% endblock %}
+{% block title %}{% if edificio_nombre and edificio_nombre != "Todos los edificios" %}{{ edificio_nombre }}{% else %}Dashboard{% endif %} | Sistema de Administración de Condominios{% endblock %}
+{% block header %}{% if edificio_nombre and edificio_nombre != "Todos los edificios" %}<i class="fas fa-building"></i> {{ edificio_nombre }}{% else %}Dashboard{% endif %}{% endblock %}
 
 {% block content %}
 <!-- Selector de edificio (solo Admin puede cambiar) -->

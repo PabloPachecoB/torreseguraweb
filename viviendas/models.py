@@ -6,11 +6,55 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
+class Condominio(models.Model):
+    """El "lugar": un condominio/residencial que agrupa una o varias torres.
+
+    Un Gerente administra un Condominio completo (todas sus torres), nunca
+    torres de lugares distintos. Los edificios sin condominio siguen
+    funcionando como unidades independientes (compatibilidad hacia atrás).
+    """
+    nombre = models.CharField(max_length=100, unique=True)
+    direccion = models.TextField()
+    descripcion = models.TextField(blank=True)
+    activo = models.BooleanField(default=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Condominio"
+        verbose_name_plural = "Condominios"
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+    def get_total_torres(self):
+        return self.edificios.count()
+
+
 class Edificio(models.Model):
+    ESQUEMAS_NUMERACION = [
+        ('PISO_LETRA', 'Piso-Letra (1-A, 2-B)'),
+        ('PISO_UNIDAD', 'Piso+Unidad (101, 202)'),
+        ('CORRELATIVO', 'Correlativo (1, 2… / 001…)'),
+        ('MANUAL', 'Manual (sin generador)'),
+    ]
+
     nombre = models.CharField(max_length=100)
     direccion = models.TextField()
     pisos = models.PositiveIntegerField()
     fecha_construccion = models.DateField(blank=True, null=True)
+    condominio = models.ForeignKey(
+        Condominio, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='edificios',
+        help_text='Condominio/lugar al que pertenece esta torre (opcional).'
+    )
+    esquema_numeracion = models.CharField(
+        max_length=12, choices=ESQUEMAS_NUMERACION, default='MANUAL',
+        help_text='Convención de numeración que usa el generador de viviendas.'
+    )
+    deptos_por_piso = models.PositiveIntegerField(
+        default=0, help_text='Departamentos por piso para el generador (0 = manual).'
+    )
     
     def __str__(self):
         return self.nombre
