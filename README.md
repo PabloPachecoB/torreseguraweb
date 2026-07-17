@@ -114,18 +114,19 @@ Panel admin Django: http://localhost:8000/admin/ (usuario `admin`)
 
 ## Arquitectura
 
-### Aplicaciones Django (7 apps)
+### Aplicaciones Django (9 apps)
 
 | App | Ruta web | Descripcion |
 |---|---|---|
 | `usuarios` | `/usuarios/` | Usuarios, roles, autenticacion, OAuth Google |
 | `viviendas` | `/viviendas/` | Edificios, departamentos, residentes |
-| `accesos` | `/accesos/` | Visitas, movimientos, QR firmados |
+| `accesos` | `/accesos/` | Visitas, movimientos, QR firmados, control de puertas (hardware) |
 | `personal` | `/personal/` | Empleados, puestos, departamentos |
 | `financiero` | `/financiero/` | Cuotas, pagos, gastos, estados de cuenta |
-| `areas_comunes` | `/areas-comunes/` | Areas comunes, reservas |
+| `areas_comunes` | `/areas-comunes/` | Areas comunes, reservas, consulta de disponibilidad |
 | `reportes` | `/reportes/` | Reportes multi-formato con graficos |
 | `alertas` | `/alertas/` | Alertas de emergencia |
+| `agente` | *(sin vistas web, solo API)* | Confirmar/auditar acciones propuestas por el agente conversacional (en desarrollo) |
 
 ### API Movil (`/api/v1/`)
 
@@ -135,10 +136,28 @@ Endpoints JWT para la app React Native:
 |---|---|
 | `/api/v1/auth/` | Login, token, refresh |
 | `/api/v1/alertas/` | CRUD alertas |
-| `/api/v1/accesos/` | Control de accesos |
+| `/api/v1/accesos/` | Control de accesos, visitas |
+| `/api/v1/accesos/puertas/` | Listar puertas segun rol, abrir puerta (webhook a ESP32), historial de aperturas |
 | `/api/v1/visitantes/` | CRUD visitantes (DRF router) |
-| `/api/v1/areas-comunes/` | Areas comunes y reservas |
+| `/api/v1/areas-comunes/` | Areas comunes, reservas, `disponibilidad/` (horarios libres + alternativas) |
 | `/api/v1/financiero/` | Cuotas pendientes/pagadas, registrar pagos |
+| `/api/v1/agente/acciones/` | Listar, confirmar o rechazar acciones propuestas por el agente conversacional |
+
+### Agente conversacional (epica en desarrollo)
+
+Se esta construyendo un agente conversacional sobre el sistema existente (reservas
+por chat, reporte de incidencias, control de cerradura). Backlog completo en
+`inst/Plan_Ejecucion_5_Dias_TorreSegura_Agente_EP_HU.xlsm - Epicas y HU.csv`.
+Avance actual:
+
+- `agente.AgentAction`: fila de estado (no un log) que representa una accion
+  propuesta al residente, con flujo `PENDIENTE -> CONFIRMADA/RECHAZADA/EJECUTADA/EXPIRADA`.
+- Endpoint de disponibilidad real de areas comunes (`GET /api/v1/areas-comunes/<id>/disponibilidad/`),
+  que calcula horarios libres y propone fechas alternativas sin inventar datos.
+- Control de puertas (`accesos.Puerta`/`AperturaPuerta`) con webhook a hardware ESP32.
+
+Documentacion detallada de la API para quienes construyen el motor conversacional:
+`inst/api_documentation_huascar.md`.
 
 ### Roles y permisos
 
@@ -191,6 +210,11 @@ El modulo mas completo del sistema. Ruta base: `/financiero/`
 python manage.py test                      # Todos
 python manage.py test financiero           # Solo financiero
 python manage.py test financiero -v2       # Con detalle
+python manage.py test agente.tests.AgentActionApiTest.test_dueno_puede_confirmar_via_api  # Un test puntual
+
+# Si algunos tests de vistas web fallan con "Missing staticfiles manifest entry",
+# corre esto una vez (genera el manifest que falta en entornos locales nuevos):
+python manage.py collectstatic --noinput
 
 # Migraciones
 python manage.py makemigrations
@@ -217,6 +241,7 @@ gunicorn condominio_app.wsgi:application --bind 0.0.0.0:8000
 | `USE_LOCAL_DB` | No | `False` | `True` = SQLite, `False` = PostgreSQL |
 | `DATABASE_URL` | Prod | - | URL de PostgreSQL |
 | `QR_SECRET_KEY` | No | `SECRET_KEY` | Clave para firmar QR de visitantes |
+| `PUERTA_WEBHOOK_TOKEN` | No | - | Token compartido con el hardware (ESP32) para el control de puertas |
 | `EMAIL_HOST_USER` | No | - | Email SMTP para notificaciones |
 | `EMAIL_HOST_PASSWORD` | No | - | Password SMTP |
 | `GOOGLE_CLIENT_ID` | No | - | OAuth Google |
@@ -234,7 +259,7 @@ TorreSegura/
 │   └── api_v1_urls.py       # Rutas API movil
 ├── usuarios/                # Usuarios, roles, auth
 ├── viviendas/               # Edificios, viviendas, residentes
-├── accesos/                 # Visitas, movimientos, QR
+├── accesos/                 # Visitas, movimientos, QR, control de puertas (Puerta/AperturaPuerta)
 ├── personal/                # Empleados, puestos
 ├── financiero/              # Cuotas, pagos, gastos, estados de cuenta
 │   ├── models.py            # 7 modelos (ConceptoCuota, Cuota, Pago, etc.)
@@ -242,13 +267,15 @@ TorreSegura/
 │   ├── signals.py           # Auto-asignacion de pagos, recargos, etc.
 │   ├── api.py               # Endpoints API movil
 │   └── forms.py             # Formularios con validacion
-├── areas_comunes/           # Areas comunes, reservas
+├── areas_comunes/           # Areas comunes, reservas, consulta de disponibilidad
 ├── reportes/                # Reportes multi-formato
 ├── alertas/                 # Alertas de emergencia
+├── agente/                  # AgentAction: confirmar/auditar acciones del agente conversacional
 ├── templates/               # Templates Django (por app)
 ├── static/                  # CSS, JS, imagenes
 ├── media/                   # Archivos subidos (comprobantes, PDFs)
 ├── scripts/setup.py         # Seed de datos iniciales
+├── inst/                    # Backlog, planes y documentacion del sprint del agente conversacional
 ├── requirements.txt         # Dependencias Python
 ├── .env.example             # Plantilla de variables de entorno
 └── manage.py
