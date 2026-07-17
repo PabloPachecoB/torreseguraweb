@@ -327,10 +327,11 @@ def generar_cuotas(request):
             edificio = form.cleaned_data['edificio']
             viviendas_seleccionadas = form.cleaned_data['viviendas']
             aplicar_a_todas = form.cleaned_data['aplicar_a_todas']
+            solo_ocupadas = form.cleaned_data.get('solo_ocupadas')
             fecha_emision = form.cleaned_data['fecha_emision']
             fecha_vencimiento = form.cleaned_data['fecha_vencimiento']
             monto_personalizado = form.cleaned_data['monto_personalizado']
-            
+
             # Determinar las viviendas a las que aplicar
             if aplicar_a_todas:
                 if request.user.rol.nombre == 'Gerente' and hasattr(request.user, 'gerente'):
@@ -349,6 +350,11 @@ def generar_cuotas(request):
                 # Gerente: filtrar solo viviendas de su edificio
                 if request.user.rol.nombre == 'Gerente' and hasattr(request.user, 'gerente') and request.user.gerente.edificio:
                     viviendas = viviendas.filter(edificio=request.user.gerente.edificio)
+
+            # No cobrar a departamentos vacíos en generación masiva
+            # (la selección específica de viviendas se respeta tal cual)
+            if solo_ocupadas and (aplicar_a_todas or edificio):
+                viviendas = viviendas.filter(estado='OCUPADO')
             
             # Monto a aplicar
             monto = monto_personalizado if monto_personalizado else concepto.monto_base
