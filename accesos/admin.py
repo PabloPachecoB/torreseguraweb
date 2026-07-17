@@ -1,6 +1,27 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Visita, MovimientoResidente
+from .models import Visita, MovimientoResidente, Puerta, AperturaPuerta
+
+
+@admin.register(Puerta)
+class PuertaAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'tipo', 'edificio', 'vivienda', 'activa', 'tiene_hardware')
+    list_filter = ('tipo', 'activa', 'edificio')
+    search_fields = ('nombre', 'edificio__nombre', 'vivienda__numero')
+
+    def tiene_hardware(self, obj):
+        return bool(obj.webhook_url)
+    tiene_hardware.boolean = True
+    tiene_hardware.short_description = 'Hardware'
+
+
+@admin.register(AperturaPuerta)
+class AperturaPuertaAdmin(admin.ModelAdmin):
+    list_display = ('puerta', 'usuario', 'fecha_hora', 'exito', 'detalle')
+    list_filter = ('exito', 'puerta__tipo', 'fecha_hora')
+    search_fields = ('puerta__nombre', 'usuario__username')
+    date_hierarchy = 'fecha_hora'
+    readonly_fields = ('puerta', 'usuario', 'fecha_hora', 'exito', 'detalle')
 
 @admin.register(Visita)
 class VisitaAdmin(admin.ModelAdmin):

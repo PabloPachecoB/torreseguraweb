@@ -20,6 +20,10 @@ environ.Env.read_env(env_file=os.path.join(BASE_DIR, '.env'))
 # Secreto dedicado para firmar QRs (opcional). Si no se define, se usa SECRET_KEY como fallback.
 QR_SECRET_KEY = env('QR_SECRET_KEY', default=None)
 
+# Token compartido con el hardware de puertas (ESP32). Debe coincidir con
+# PUERTA_TOKEN en el firmware. Vacío = no se envía cabecera de autenticación.
+PUERTA_WEBHOOK_TOKEN = env('PUERTA_WEBHOOK_TOKEN', default='')
+
 # ─── BNB Payment Gateway (QR Simple) ─────────────────────────────────
 BNB_SANDBOX = env.bool('BNB_SANDBOX', default=True)
 BNB_ACCOUNT_ID = env('BNB_ACCOUNT_ID', default='')
