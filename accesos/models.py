@@ -82,6 +82,11 @@ class Puerta(models.Model):
         blank=True, default='',
         help_text='URL del dispositivo (ESP32/relé). Vacío = modo software.'
     )
+    # HU-04.2 (LOCK-04): "abrir" solo funciona en demo controlada.
+    habilitada_para_demo = models.BooleanField(
+        default=False,
+        help_text='Si está apagado, la apertura remota queda bloqueada (demo controlada).'
+    )
 
     class Meta:
         ordering = ['tipo', 'nombre']

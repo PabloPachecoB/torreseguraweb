@@ -395,3 +395,102 @@ class MovimientoResidenteViewsTest(TestCase):
         self.assertIsNotNone(nuevo_movimiento.fecha_hora_salida)
         self.assertTrue(nuevo_movimiento.vehiculo)
         self.assertEqual(nuevo_movimiento.placa_vehiculo, 'XYZ789')
+
+from accesos.models import Puerta, AperturaPuerta
+
+
+class AperturaConfirmacionReforzadaTest(TestCase):
+    """HU-04.2: demo controlada + confirmación reforzada (segundo factor)."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from usuarios.models import Rol
+        from viviendas.models import Edificio, Vivienda, Residente
+
+        rol_res, _ = Rol.objects.get_or_create(nombre='Residente')
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username='res.cerradura', password='clave.segura1', rol=rol_res
+        )
+        edificio = Edificio.objects.create(nombre='Torre Test HU42', direccion='x', pisos=3)
+        vivienda = Vivienda.objects.create(
+            edificio=edificio, numero='1-A', piso=1,
+            metros_cuadrados=60, habitaciones=2, baños=1,
+        )
+        Residente.objects.create(usuario=self.user, vivienda=vivienda, activo=True)
+        self.puerta = Puerta.objects.create(
+            nombre='1-A', tipo=Puerta.TIPO_VIVIENDA, vivienda=vivienda,
+        )
+        self.client.force_login(self.user)
+
+    def _abrir(self):
+        return self.client.post(f'/api/v1/accesos/puertas/{self.puerta.id}/abrir/')
+
+    def test_puerta_sin_demo_bloqueada(self):
+        resp = self._abrir()
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn('demo controlada', resp.json()['mensaje'])
+
+    def test_abrir_crea_accion_pendiente_sin_ejecutar(self):
+        from agente.models import AgentAction
+        self.puerta.habilitada_para_demo = True
+        self.puerta.save()
+        resp = self._abrir()
+        self.assertEqual(resp.status_code, 202)
+        data = resp.json()
+        self.assertTrue(data['requiere_confirmacion'])
+        accion = AgentAction.objects.get(pk=data['accion_id'])
+        self.assertEqual(accion.estado, AgentAction.PENDIENTE)
+        self.assertEqual(accion.tipo_accion, 'CERRADURA_ABRIR')
+        # NO se abrió nada todavía
+        self.assertEqual(AperturaPuerta.objects.count(), 0)
+
+    def test_confirmar_sin_password_rechazado(self):
+        self.puerta.habilitada_para_demo = True
+        self.puerta.save()
+        accion_id = self._abrir().json()['accion_id']
+        resp = self.client.post(f'/api/v1/agente/acciones/{accion_id}/confirmar/', content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(AperturaPuerta.objects.count(), 0)
+
+    def test_confirmar_password_incorrecta_rechazado(self):
+        self.puerta.habilitada_para_demo = True
+        self.puerta.save()
+        accion_id = self._abrir().json()['accion_id']
+        resp = self.client.post(
+            f'/api/v1/agente/acciones/{accion_id}/confirmar/',
+            {'password': 'incorrecta'}, content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(AperturaPuerta.objects.count(), 0)
+
+    def test_confirmar_password_correcta_ejecuta(self):
+        from agente.models import AgentAction
+        self.puerta.habilitada_para_demo = True
+        self.puerta.save()
+        accion_id = self._abrir().json()['accion_id']
+        resp = self.client.post(
+            f'/api/v1/agente/acciones/{accion_id}/confirmar/',
+            {'password': 'clave.segura1'}, content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['abierta'])
+        accion = AgentAction.objects.get(pk=accion_id)
+        self.assertEqual(accion.estado, AgentAction.EJECUTADA)
+        self.assertTrue(accion.resultado['abierta'])
+        self.assertEqual(AperturaPuerta.objects.filter(exito=True).count(), 1)
+
+    def test_otro_usuario_no_puede_confirmar(self):
+        from django.contrib.auth import get_user_model
+        self.puerta.habilitada_para_demo = True
+        self.puerta.save()
+        accion_id = self._abrir().json()['accion_id']
+        otro = get_user_model().objects.create_user(username='otro.res', password='clave.segura2')
+        self.client.force_login(otro)
+        resp = self.client.post(
+            f'/api/v1/agente/acciones/{accion_id}/confirmar/',
+            {'password': 'clave.segura2'}, content_type='application/json',
+        )
+        # el queryset del viewset solo expone acciones propias -> 404
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(AperturaPuerta.objects.count(), 0)
