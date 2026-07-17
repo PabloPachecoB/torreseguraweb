@@ -10,14 +10,43 @@ from usuarios.models import Usuario, Rol
 from django.core.exceptions import ObjectDoesNotExist
 
 class EdificioForm(forms.ModelForm):
+    generar_viviendas_auto = forms.BooleanField(
+        label="Generar departamentos automáticamente",
+        required=False,
+        initial=False,
+        help_text="Crea todos los departamentos según el esquema y la cantidad por piso.",
+    )
+
     class Meta:
         model = Edificio
-        # Config del generador de viviendas (esquema_numeracion, deptos_por_piso)
-        # se gestiona desde el admin de Django, donde vive la acción de generar.
-        exclude = ['esquema_numeracion', 'deptos_por_piso']
+        fields = '__all__'
         widgets = {
             'fecha_construccion': forms.DateInput(attrs={'type': 'date'})
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Config del generador: opcional en el formulario web
+        self.fields['esquema_numeracion'].required = False
+        self.fields['deptos_por_piso'].required = False
+
+    def clean_esquema_numeracion(self):
+        return self.cleaned_data.get('esquema_numeracion') or 'MANUAL'
+
+    def clean_deptos_por_piso(self):
+        valor = self.cleaned_data.get('deptos_por_piso')
+        return 0 if valor is None else valor
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('generar_viviendas_auto'):
+            if cleaned.get('esquema_numeracion') in (None, '', 'MANUAL'):
+                self.add_error('esquema_numeracion',
+                               'Elige un esquema de numeración para generar automáticamente.')
+            if not cleaned.get('deptos_por_piso'):
+                self.add_error('deptos_por_piso',
+                               'Indica cuántos departamentos hay por piso.')
+        return cleaned
 
 class ViviendaForm(forms.ModelForm):
     class Meta:

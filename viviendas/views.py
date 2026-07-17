@@ -45,10 +45,23 @@ class EdificioCreateView(LoginRequiredMixin, AdministradorSoloMixin, CreateView)
     form_class = EdificioForm
     template_name = 'viviendas/edificio_form.html'
     success_url = reverse_lazy('edificio-list')
-    
+
     def form_valid(self, form):
+        response = super().form_valid(form)
         messages.success(self.request, 'Edificio creado exitosamente.')
-        return super().form_valid(form)
+
+        if form.cleaned_data.get('generar_viviendas_auto'):
+            from .services import generar_viviendas
+            try:
+                r = generar_viviendas(self.object, crear_puertas=True)
+            except ValueError as e:
+                messages.warning(self.request, f'No se generaron viviendas: {e}')
+            else:
+                msg = f'Se generaron {len(r["creadas"])} departamentos automáticamente.'
+                if r['errores']:
+                    msg += f' ({len(r["errores"])} con error)'
+                messages.success(self.request, msg)
+        return response
 
 class EdificioUpdateView(LoginRequiredMixin, AdministradorSoloMixin, UpdateView):
     model = Edificio

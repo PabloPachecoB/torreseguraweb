@@ -590,3 +590,49 @@ class GeneradorViviendasTest(TestCase):
         self.assertEqual(
             Puerta.objects.filter(vivienda__edificio=self.edificio).count(), 6
         )
+
+
+class EdificioCreateConGeneracionTest(TestCase):
+    """Flujo web: crear edificio con generación automática de departamentos."""
+
+    def setUp(self):
+        rol_admin, _ = Rol.objects.get_or_create(nombre='Administrador')
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='admin.gen', password='clave123', rol=rol_admin
+        )
+
+    def test_crear_edificio_generando_departamentos(self):
+        self.client.login(username='admin.gen', password='clave123')
+        data = {
+            'nombre': 'Torre Auto',
+            'direccion': 'Av. Generada 1',
+            'pisos': 5,
+            'esquema_numeracion': 'PISO_LETRA',
+            'deptos_por_piso': 2,
+            'generar_viviendas_auto': 'on',
+        }
+        response = self.client.post(reverse('edificio-create'), data)
+        self.assertEqual(response.status_code, 302)
+        ed = Edificio.objects.get(nombre='Torre Auto')
+        self.assertEqual(ed.viviendas.count(), 10)  # 5 pisos x 2
+        self.assertTrue(ed.viviendas.filter(numero='5-B').exists())
+
+    def test_crear_edificio_sin_generar_sigue_igual(self):
+        self.client.login(username='admin.gen', password='clave123')
+        data = {'nombre': 'Torre Manual', 'direccion': 'x', 'pisos': 4}
+        response = self.client.post(reverse('edificio-create'), data)
+        self.assertEqual(response.status_code, 302)
+        ed = Edificio.objects.get(nombre='Torre Manual')
+        self.assertEqual(ed.viviendas.count(), 0)
+        self.assertEqual(ed.esquema_numeracion, 'MANUAL')
+
+    def test_generar_sin_esquema_da_error_de_form(self):
+        self.client.login(username='admin.gen', password='clave123')
+        data = {
+            'nombre': 'Torre Mal', 'direccion': 'x', 'pisos': 4,
+            'generar_viviendas_auto': 'on',  # sin esquema ni deptos_por_piso
+        }
+        response = self.client.post(reverse('edificio-create'), data)
+        self.assertEqual(response.status_code, 200)  # se queda en el form con errores
+        self.assertFalse(Edificio.objects.filter(nombre='Torre Mal').exists())
