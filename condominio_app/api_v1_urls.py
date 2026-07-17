@@ -26,6 +26,9 @@ urlpatterns = [
     # Agente conversacional: revisar/confirmar/rechazar acciones (HU-01.2)
     path("agente/", include("agente.api_v1_urls")),
 
+    # Incidencias y evidencia (HU-03.1)
+    path("incidencias/", include("incidencias.api_v1_urls")),
+
     # Visitantes (gestión móvil)
     path("", include(router.urls)),
 ]
