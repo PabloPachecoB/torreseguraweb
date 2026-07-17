@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from .llm import QwenLocalAdapter
 from .models import AgentAction
 from .serializers import AgentActionSerializer
 
@@ -44,3 +45,16 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
         except ValueError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
         return Response(self.get_serializer(accion).data)
+
+    @action(detail=False, methods=['get'])
+    def health(self, request):
+        adapter = QwenLocalAdapter()
+        payload = adapter.health_check()
+        return Response(payload)
+
+    @action(detail=False, methods=['post'])
+    def chat(self, request):
+        message = request.data.get('message', '')
+        adapter = QwenLocalAdapter()
+        payload = adapter.generate(str(message))
+        return Response(payload)

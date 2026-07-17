@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -6,6 +7,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from .llm import QwenLocalAdapter
 from .models import AgentAction
 
 Usuario = get_user_model()
@@ -80,6 +82,42 @@ class AgentActionApiTest(TestCase):
             payload={'area_id': 1},
         )
         self.client = APIClient()
+
+    def test_health_endpoint_reporta_estado_del_adapter_local(self):
+        self.client.force_authenticate(self.dueno)
+        url = reverse('agent-actions-health')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['provider'], 'qwen_local')
+        self.assertIn('healthy', response.data)
+
+    def test_adapter_local_revisa_salud_con_endpoint_configurado(self):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {'status': 'ok'}
+
+        with patch('agente.llm.requests.get', return_value=mock_response):
+            adapter = QwenLocalAdapter(base_url='http://localhost:8001', api_key='test-key')
+            result = adapter.health_check()
+
+        self.assertTrue(result['healthy'])
+        self.assertEqual(result['status'], 'ok')
+
+    def test_chat_endpoint_devuelve_respuesta_del_adapter_local(self):
+        self.client.force_authenticate(self.dueno)
+        url = reverse('agent-actions-chat')
+
+        with patch('agente.api.QwenLocalAdapter.generate', return_value={
+            'provider': 'qwen_local',
+            'response': 'Respuesta de prueba',
+            'healthy': True,
+        }) as mock_generate:
+            response = self.client.post(url, {'message': 'Hola'}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['response'], 'Respuesta de prueba')
+        self.assertEqual(response.data['provider'], 'qwen_local')
+        mock_generate.assert_called_once_with('Hola')
 
     def test_dueno_puede_confirmar_via_api(self):
         self.client.force_authenticate(self.dueno)
