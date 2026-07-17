@@ -3,6 +3,11 @@ from rest_framework import serializers
 from .models import AgentAction
 
 
+class AgentChatRequestSerializer(serializers.Serializer):
+    message = serializers.CharField(max_length=4000, trim_whitespace=True)
+    thread_id = serializers.UUIDField(required=False)
+
+
 class AgentActionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentAction
@@ -10,6 +15,11 @@ class AgentActionSerializer(serializers.ModelSerializer):
             'id',
             'tipo_accion',
             'payload',
+            'thread_id',
+            'requires_confirmation',
+            'confirmation_method',
+            'idempotency_key',
+            'tool_name',
             'estado',
             'estado_previo',
             'fecha_creacion',
@@ -17,5 +27,9 @@ class AgentActionSerializer(serializers.ModelSerializer):
             'confirmada_por',
             'expira_en',
             'resultado',
+            'backend_reference',
+            'executed_at',
+            'verification_status',
+            'error_code',
         ]
         read_only_fields = fields

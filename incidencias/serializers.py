@@ -42,6 +42,7 @@ class EvidenciaIncidenciaSerializer(serializers.ModelSerializer):
 class IncidenciaSerializer(serializers.ModelSerializer):
     categoria_display = serializers.CharField(source='get_categoria_display', read_only=True)
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    urgencia_display = serializers.CharField(source='get_urgencia_display', read_only=True)
     residente_nombre = serializers.SerializerMethodField()
     evidencias = EvidenciaIncidenciaSerializer(many=True, read_only=True)
     eventos = EventoIncidenciaSerializer(many=True, read_only=True)
@@ -50,11 +51,15 @@ class IncidenciaSerializer(serializers.ModelSerializer):
         model = Incidencia
         fields = [
             'id', 'categoria', 'categoria_display', 'titulo', 'descripcion',
+            'ubicacion', 'urgencia', 'urgencia_display', 'estimacion_preliminar',
             'estado', 'estado_display', 'residente_nombre',
             'fecha_creacion', 'fecha_actualizacion',
             'evidencias', 'eventos',
         ]
-        read_only_fields = ['id', 'estado', 'fecha_creacion', 'fecha_actualizacion', 'evidencias', 'eventos']
+        read_only_fields = [
+            'id', 'estado', 'estimacion_preliminar', 'fecha_creacion',
+            'fecha_actualizacion', 'evidencias', 'eventos',
+        ]
 
     def get_residente_nombre(self, obj):
         usuario = obj.residente.usuario
@@ -67,11 +72,13 @@ class IncidenciaListSerializer(serializers.ModelSerializer):
 
     categoria_display = serializers.CharField(source='get_categoria_display', read_only=True)
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    urgencia_display = serializers.CharField(source='get_urgencia_display', read_only=True)
 
     class Meta:
         model = Incidencia
         fields = [
             'id', 'categoria', 'categoria_display', 'titulo',
+            'ubicacion', 'urgencia', 'urgencia_display',
             'estado', 'estado_display', 'fecha_creacion', 'fecha_actualizacion',
         ]
         read_only_fields = fields

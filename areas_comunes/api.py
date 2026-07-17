@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -132,7 +133,9 @@ def crear_reserva(request, area_id):
     fecha = request.data.get("fecha")
     hora_inicio = request.data.get("hora_inicio")
     hora_fin = request.data.get("hora_fin")
+    cantidad_personas = request.data.get("cantidad_personas", 1)
     motivo = request.data.get("motivo", "")
+    idempotency_key = request.headers.get("Idempotency-Key") or None
 
     if not fecha or not hora_inicio or not hora_fin:
         return Response(
@@ -140,16 +143,59 @@ def crear_reserva(request, area_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    try:
-        reserva = Reserva(
-            area_comun=area,
-            residente=request.user.residente,
-            fecha=fecha,
-            hora_inicio=hora_inicio,
-            hora_fin=hora_fin,
-            motivo=motivo,
+    existing = (
+        Reserva.objects.filter(idempotency_key=idempotency_key).first()
+        if idempotency_key
+        else None
+    )
+    if existing is not None:
+        if existing.residente_id != request.user.residente.pk:
+            return Response(
+                {"mensaje": "La clave de idempotencia ya está en uso."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        same_parameters = all(
+            [
+                existing.area_comun_id == area.pk,
+                existing.fecha.isoformat() == str(fecha),
+                existing.hora_inicio.strftime("%H:%M") == str(hora_inicio)[:5],
+                existing.hora_fin.strftime("%H:%M") == str(hora_fin)[:5],
+                str(existing.cantidad_personas) == str(cantidad_personas),
+                existing.motivo == motivo,
+            ]
         )
-        reserva.save()
+        if not same_parameters:
+            return Response(
+                {
+                    "mensaje": (
+                        "La clave de idempotencia fue usada con otros parámetros."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        serializer = ReservaSerializer(existing, context={"request": request})
+        return Response(
+            {
+                "mensaje": "Reserva ya procesada anteriormente.",
+                "reserva": serializer.data,
+                "replayed": True,
+            }
+        )
+
+    try:
+        with transaction.atomic():
+            locked_area = AreaComun.objects.select_for_update().get(pk=area.pk)
+            reserva = Reserva(
+                area_comun=locked_area,
+                residente=request.user.residente,
+                fecha=fecha,
+                hora_inicio=hora_inicio,
+                hora_fin=hora_fin,
+                cantidad_personas=cantidad_personas,
+                motivo=motivo,
+                idempotency_key=idempotency_key,
+            )
+            reserva.save()
     except ValidationError as e:
         msg = e.message if hasattr(e, "message") else str(e)
         if hasattr(e, "message_dict"):
@@ -160,6 +206,24 @@ def crear_reserva(request, area_id):
         return Response(
             {"mensaje": msg},
             status=status.HTTP_400_BAD_REQUEST,
+        )
+    except IntegrityError:
+        existing = Reserva.objects.filter(
+            idempotency_key=idempotency_key,
+            residente=request.user.residente,
+        ).first()
+        if existing is None:
+            return Response(
+                {"mensaje": "No se pudo determinar el resultado de la reserva."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        serializer = ReservaSerializer(existing, context={"request": request})
+        return Response(
+            {
+                "mensaje": "Reserva ya procesada anteriormente.",
+                "reserva": serializer.data,
+                "replayed": True,
+            }
         )
 
     serializer = ReservaSerializer(reserva, context={"request": request})

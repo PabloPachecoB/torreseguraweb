@@ -1,5 +1,10 @@
 # Anexo Técnico — Agente de Incidencias
 
+> **Decisión vigente (2026-07-17):** este anexo describe una propuesta anterior.
+> Para el P0 conversacional, la fuente de verdad es `incidencias.Incidencia`;
+> `alertas.Alerta` queda para alertas, emergencias y anuncios. No implementar los
+> cambios a `Alerta` descritos abajo como parte del MVP. Consulte `AGENT_MVP.md`.
+
 Complemento del documento de flujo del agente. Resuelve los 9 huecos detectados
 en la revisión técnica (2026-07-13) y documenta las colisiones con el código
 existente que hay que evitar. **Leer junto con el documento principal del flujo.**

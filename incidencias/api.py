@@ -1,5 +1,6 @@
 import os
 
+from django.db import IntegrityError, transaction
 from django.http import FileResponse
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes, permission_classes
@@ -71,6 +72,9 @@ def crear_incidencia(request):
     titulo = request.data.get('titulo')
     descripcion = request.data.get('descripcion')
     categoria = request.data.get('categoria', Incidencia.OTRO)
+    ubicacion = request.data.get('ubicacion', '')
+    urgencia = request.data.get('urgencia', Incidencia.URGENCIA_MEDIA)
+    idempotency_key = request.headers.get('Idempotency-Key') or None
 
     if not titulo or not descripcion:
         faltantes = [c for c, v in [('titulo', titulo), ('descripcion', descripcion)] if not v]
@@ -85,21 +89,78 @@ def crear_incidencia(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    incidencia = Incidencia.objects.create(
-        residente=request.user.residente,
-        categoria=categoria,
-        titulo=titulo,
-        descripcion=descripcion,
-    )
-
-    archivos = request.FILES.getlist('evidencias')
-    for archivo in archivos:
-        EvidenciaIncidencia.objects.create(
-            incidencia=incidencia,
-            archivo=archivo,
-            tipo=_inferir_tipo_evidencia(archivo.name),
-            subido_por=request.user,
+    if urgencia not in dict(Incidencia.URGENCIAS):
+        return Response(
+            {'mensaje': f'Urgencia invalida. Opciones: {", ".join(dict(Incidencia.URGENCIAS))}'},
+            status=status.HTTP_400_BAD_REQUEST,
         )
+
+    existing = (
+        Incidencia.objects.filter(idempotency_key=idempotency_key).first()
+        if idempotency_key
+        else None
+    )
+    if existing is not None:
+        if existing.residente_id != request.user.residente.pk:
+            return Response(
+                {'mensaje': 'La clave de idempotencia ya está en uso.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        same_parameters = all([
+            existing.titulo == titulo,
+            existing.descripcion == descripcion,
+            existing.categoria == categoria,
+            existing.ubicacion == ubicacion,
+            existing.urgencia == urgencia,
+        ])
+        if not same_parameters:
+            return Response(
+                {'mensaje': 'La clave de idempotencia fue usada con otros parámetros.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        serializer = IncidenciaSerializer(existing, context={'request': request})
+        return Response({
+            'mensaje': 'Incidencia ya procesada anteriormente.',
+            'incidencia': serializer.data,
+            'replayed': True,
+        })
+
+    try:
+        with transaction.atomic():
+            incidencia = Incidencia.objects.create(
+                residente=request.user.residente,
+                categoria=categoria,
+                titulo=titulo,
+                descripcion=descripcion,
+                ubicacion=ubicacion,
+                urgencia=urgencia,
+                idempotency_key=idempotency_key,
+            )
+
+            archivos = request.FILES.getlist('evidencias')
+            for archivo in archivos:
+                EvidenciaIncidencia.objects.create(
+                    incidencia=incidencia,
+                    archivo=archivo,
+                    tipo=_inferir_tipo_evidencia(archivo.name),
+                    subido_por=request.user,
+                )
+    except IntegrityError:
+        existing = Incidencia.objects.filter(
+            idempotency_key=idempotency_key,
+            residente=request.user.residente,
+        ).first()
+        if existing is None:
+            return Response(
+                {'mensaje': 'No se pudo determinar el resultado de la incidencia.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        serializer = IncidenciaSerializer(existing, context={'request': request})
+        return Response({
+            'mensaje': 'Incidencia ya procesada anteriormente.',
+            'incidencia': serializer.data,
+            'replayed': True,
+        })
 
     incidencia.refresh_from_db()
     serializer = IncidenciaSerializer(incidencia, context={'request': request})
@@ -155,6 +216,37 @@ def descargar_evidencia(request, incidencia_id, evidencia_id):
         evidencia.archivo.open('rb'),
         as_attachment=True,
         filename=os.path.basename(evidencia.archivo.name),
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def agregar_evidencia(request, incidencia_id):
+    """Agrega evidencia mediante el backend después de crear la incidencia."""
+    incidencia = _incidencia_visible_o_none(request, incidencia_id)
+    if incidencia is None:
+        return Response(
+            {'mensaje': 'Incidencia no encontrada.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    archivos = request.FILES.getlist('evidencias')
+    if not archivos:
+        return Response(
+            {'mensaje': 'Debe adjuntar al menos un archivo.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    for archivo in archivos:
+        EvidenciaIncidencia.objects.create(
+            incidencia=incidencia,
+            archivo=archivo,
+            tipo=_inferir_tipo_evidencia(archivo.name),
+            subido_por=request.user,
+        )
+    incidencia.refresh_from_db()
+    return Response(
+        IncidenciaSerializer(incidencia, context={'request': request}).data,
+        status=status.HTTP_201_CREATED,
     )
 
 

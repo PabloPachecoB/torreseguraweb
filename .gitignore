@@ -56,4 +56,8 @@ mediafiles/
 backup_data.json
 
 # Agent Knowledge
-.ageent.md
+.agent.md
+AGENTS.md
+.venv
+.codex
+.agents

@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -12,6 +12,7 @@ from .models import EventoIncidencia, Incidencia
 Usuario = get_user_model()
 
 
+@override_settings(SECURE_SSL_REDIRECT=False)
 class IncidenciaApiTest(TestCase):
     def setUp(self):
         self.edificio = Edificio.objects.create(nombre='Torre Test', direccion='Calle 1', pisos=5)
@@ -176,3 +177,57 @@ class IncidenciaApiTest(TestCase):
     def test_anonimo_no_puede_listar(self):
         response = self.client.get(reverse('api_v1_mis_incidencias'))
         self.assertEqual(response.status_code, 401)
+
+    def test_idempotency_key_no_duplica_incidencia(self):
+        self.client.force_authenticate(self.usuario)
+        payload = {
+            'titulo': 'Fuga repetida',
+            'descripcion': 'Hay una fuga en el pasillo',
+            'categoria': 'PLOMERIA',
+            'ubicacion': 'Pasillo piso 1',
+            'urgencia': 'ALTA',
+        }
+
+        first = self.client.post(
+            reverse('api_v1_crear_incidencia'),
+            payload,
+            format='multipart',
+            HTTP_IDEMPOTENCY_KEY='incident-api-test',
+        )
+        second = self.client.post(
+            reverse('api_v1_crear_incidencia'),
+            payload,
+            format='multipart',
+            HTTP_IDEMPOTENCY_KEY='incident-api-test',
+        )
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(second.data['replayed'])
+        self.assertEqual(Incidencia.objects.count(), 1)
+
+    def test_residente_agrega_evidencia_despues_de_crear(self):
+        incidencia = Incidencia.objects.create(
+            residente=self.residente,
+            titulo='Fuga',
+            descripcion='Fuga en pasillo',
+            ubicacion='Pasillo',
+        )
+        self.client.force_authenticate(self.usuario)
+        archivo = SimpleUploadedFile(
+            'evidencia.jpg',
+            b'contenido-de-prueba',
+            content_type='image/jpeg',
+        )
+
+        response = self.client.post(
+            reverse(
+                'api_v1_agregar_evidencia',
+                kwargs={'incidencia_id': incidencia.pk},
+            ),
+            {'evidencias': [archivo]},
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(response.data['evidencias']), 1)
