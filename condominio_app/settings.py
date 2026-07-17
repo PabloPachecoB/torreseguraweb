@@ -86,6 +86,8 @@ INSTALLED_APPS = [
     'reportes',
     'alertas',
     'areas_comunes',
+    'agente',
+    'incidencias',
 ]
 
 MIDDLEWARE = [

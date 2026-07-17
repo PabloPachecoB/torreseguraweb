@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -9,6 +9,73 @@ from rest_framework.response import Response
 
 from .models import AreaComun, Reserva
 from .serializers import AreaComunSerializer, ReservaSerializer
+
+DURACION_MINUTOS_DEFAULT = 60
+DIAS_BUSQUEDA_ALTERNATIVAS = 7
+
+
+def _area_del_usuario_o_none(request, area_id):
+    """Busca el area activa validando que pertenezca al edificio del usuario
+    (salvo Administrador, que puede consultar cualquiera). Devuelve None si no
+    existe o no le corresponde al usuario.
+    """
+    try:
+        area = AreaComun.objects.select_related("edificio").get(pk=area_id, activo=True)
+    except AreaComun.DoesNotExist:
+        return None
+
+    rol = getattr(getattr(request.user, "rol", None), "nombre", None)
+    if request.user.is_superuser or rol == "Administrador":
+        return area
+
+    edificio = _edificio_del_usuario(request.user)
+    if edificio and area.edificio_id == edificio.id:
+        return area
+    return None
+
+
+def _slots_disponibles(area, fecha, duracion_minutos):
+    """Calcula los huecos libres de `area` en `fecha`, en base al horario del
+    area y a las reservas (pendiente/confirmada) reales de ese dia — nunca
+    inventa horarios fuera del rango de atencion ni ignora reservas existentes.
+    """
+    inicio_jornada = datetime.combine(fecha, area.horario_inicio)
+    fin_jornada = datetime.combine(fecha, area.horario_fin)
+    duracion = timedelta(minutes=duracion_minutos)
+
+    ocupados = list(
+        Reserva.objects.filter(
+            area_comun=area,
+            fecha=fecha,
+            estado__in=["pendiente", "confirmada"],
+        )
+        .order_by("hora_inicio")
+        .values_list("hora_inicio", "hora_fin")
+    )
+
+    slots = []
+    cursor = inicio_jornada
+    for hora_inicio_ocupada, hora_fin_ocupada in ocupados:
+        ocupado_inicio = datetime.combine(fecha, hora_inicio_ocupada)
+        ocupado_fin = datetime.combine(fecha, hora_fin_ocupada)
+
+        hueco_fin = min(ocupado_inicio, fin_jornada)
+        slot_inicio = cursor
+        while slot_inicio + duracion <= hueco_fin:
+            slots.append((slot_inicio.time(), (slot_inicio + duracion).time()))
+            slot_inicio += duracion
+
+        cursor = max(cursor, ocupado_fin)
+
+    slot_inicio = cursor
+    while slot_inicio + duracion <= fin_jornada:
+        slots.append((slot_inicio.time(), (slot_inicio + duracion).time()))
+        slot_inicio += duracion
+
+    return [
+        {"hora_inicio": inicio.strftime("%H:%M"), "hora_fin": fin.strftime("%H:%M")}
+        for inicio, fin in slots
+    ]
 
 
 def _edificio_del_usuario(user):
@@ -55,9 +122,8 @@ def crear_reserva(request, area_id):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    try:
-        area = AreaComun.objects.get(pk=area_id, activo=True)
-    except AreaComun.DoesNotExist:
+    area = _area_del_usuario_o_none(request, area_id)
+    if area is None:
         return Response(
             {"mensaje": "Area comun no encontrada."},
             status=status.HTTP_404_NOT_FOUND,
@@ -185,4 +251,80 @@ def cancelar_reserva(request, reserva_id):
     serializer = ReservaSerializer(reserva, context={"request": request})
     return Response(
         {"mensaje": "Reserva cancelada correctamente.", "reserva": serializer.data}
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def consultar_disponibilidad(request, area_id):
+    """HU-02.1: consulta huecos libres reales de un area comun para una fecha,
+    respetando su horario de atencion y las reservas ya existentes (nunca
+    inventa horarios). Si no hay lugar en la fecha pedida, busca alternativas
+    en los proximos dias con la misma logica.
+
+    Query params:
+      - fecha (obligatorio): YYYY-MM-DD
+      - duracion_minutos (opcional, default 60)
+    """
+    area = _area_del_usuario_o_none(request, area_id)
+    if area is None:
+        return Response(
+            {"mensaje": "Area comun no encontrada."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    fecha_str = request.query_params.get("fecha")
+    if not fecha_str:
+        return Response(
+            {"mensaje": "Fecha es obligatoria.", "campos_faltantes": ["fecha"]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        fecha = date.fromisoformat(fecha_str)
+    except ValueError:
+        return Response(
+            {"mensaje": "Fecha invalida, use el formato YYYY-MM-DD."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if fecha < timezone.localdate():
+        return Response(
+            {"mensaje": "La fecha debe ser hoy o una fecha futura."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    duracion_str = request.query_params.get("duracion_minutos", DURACION_MINUTOS_DEFAULT)
+    try:
+        duracion_minutos = int(duracion_str)
+        if duracion_minutos <= 0:
+            raise ValueError
+    except ValueError:
+        return Response(
+            {"mensaje": "duracion_minutos debe ser un entero positivo."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    slots = _slots_disponibles(area, fecha, duracion_minutos)
+
+    alternativas = []
+    if not slots:
+        for i in range(1, DIAS_BUSQUEDA_ALTERNATIVAS + 1):
+            fecha_alterna = fecha + timedelta(days=i)
+            slots_alterna = _slots_disponibles(area, fecha_alterna, duracion_minutos)
+            if slots_alterna:
+                alternativas.append(
+                    {"fecha": fecha_alterna.isoformat(), "slots_disponibles": slots_alterna}
+                )
+            if len(alternativas) >= 3:
+                break
+
+    return Response(
+        {
+            "area": AreaComunSerializer(area, context={"request": request}).data,
+            "fecha_consultada": fecha.isoformat(),
+            "duracion_minutos": duracion_minutos,
+            "slots_disponibles": slots,
+            "alternativas": alternativas,
+        }
     )
