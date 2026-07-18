@@ -2,6 +2,9 @@
 venv/
 env/
 .env
+.env.repo
+.env.*
+!.env.example
 # Archivos de Python
 __pycache__/
 *.py[cod]

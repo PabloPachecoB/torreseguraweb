@@ -1,5 +1,8 @@
+from datetime import date
+
 from django.http import JsonResponse
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.contrib.auth.decorators import login_required
 from .models import Visita, MovimientoResidente
 from viviendas.models import Residente, Vivienda
@@ -152,65 +155,73 @@ def verificar_qr_visita(request):
         return Response({'valido': False, 'mensaje': 'ID y firma requeridos.'}, status=400)
 
     try:
-        visita = Visita.objects.get(id=visita_id)
+        # Lock de fila + atomicidad: dos escaneos simultáneos del mismo QR no
+        # pueden ambos pasar el chequeo anti-replay (evita doble ingreso).
+        with transaction.atomic():
+            visita = Visita.objects.select_for_update().get(id=visita_id)
 
-        # Anti-replay: si ya fue usado, rechazar
-        if getattr(visita, 'qr_usado', False):
-            return Response(
-                {'valido': False, 'mensaje': 'Este QR ya fue utilizado.'},
-                status=409,
-            )
+            # Anti-replay: si ya fue usado, rechazar
+            if getattr(visita, 'qr_usado', False):
+                return Response(
+                    {'valido': False, 'mensaje': 'Este QR ya fue utilizado.'},
+                    status=409,
+                )
 
-        # Verificar la firma antes de continuar
-        # - Si el request trae nonce, validamos con el esquema nuevo.
-        # - Si no trae nonce, aceptamos temporalmente el esquema antiguo por compatibilidad.
-        if nonce:
-            firma_ok = verificar_firma_qr(int(visita_id), firma, nonce=str(nonce))
-        else:
-            firma_ok = verificar_firma_qr(int(visita_id), firma)
-
-        if not firma_ok:
-            return Response({'valido': False, 'mensaje': 'QR inválido o alterado.'}, status=403)
-
-        if visita.fecha_hora_salida:
-            return Response({'valido': False, 'mensaje': 'Esta visita ya fue finalizada.'})
-
-        # Ventana de validez (solo aplica a reservas a futuro, no a registros inmediatos)
-        if visita.ventana_no_iniciada:
-            return Response({
-                'valido': False,
-                'mensaje': f'Esta visita todavia no esta habilitada. Ingreso valido desde las {visita.hora_inicio}.',
-            }, status=403)
-        if visita.ventana_expirada:
-            if visita.estado == Visita.RESERVADA:
-                visita.estado = Visita.EXPIRADA
-                visita.save(update_fields=['estado'])
-            return Response({
-                'valido': False,
-                'mensaje': f'El QR expiro — la ventana de ingreso era hasta las {visita.hora_fin}.',
-            }, status=403)
-
-        # Consumir QR (anti-replay): se marca usado al primer escaneo exitoso
-        visita.qr_usado = True
-        visita.qr_usado_en = timezone.now()
-        visita.fecha_hora_entrada = visita.fecha_hora_entrada or timezone.now()
-        visita.estado = Visita.CONFIRMADA
-        visita.save(update_fields=['qr_usado', 'qr_usado_en', 'fecha_hora_entrada', 'estado'])
-
-        return Response({
-            'valido': True,
-            'mensaje': 'QR verificado correctamente.',
-            'visitante': visita.nombre_visitante,
-            'documento': visita.documento_visitante,
-            'vivienda': str(visita.vivienda_destino),
-            'fecha': visita.fecha_hora_entrada.strftime('%Y-%m-%d %H:%M'),
-            'cantidad_personas': visita.cantidad_personas,
-            'motivo': visita.motivo,
-            'autorizado_por': str(visita.residente_autoriza)
-        })
+            return _procesar_qr_visita(visita, visita_id, firma, nonce)
 
     except Visita.DoesNotExist:
         return Response({'valido': False, 'mensaje': 'No se encontró una visita válida con ese ID.'}, status=404)
+
+
+def _procesar_qr_visita(visita, visita_id, firma, nonce):
+    """Valida firma/ventana y consume el QR. Corre dentro del lock de la visita."""
+    # Verificar la firma antes de continuar
+    # - Si el request trae nonce, validamos con el esquema nuevo.
+    # - Si no trae nonce, aceptamos temporalmente el esquema antiguo por compatibilidad.
+    if nonce:
+        firma_ok = verificar_firma_qr(int(visita_id), firma, nonce=str(nonce))
+    else:
+        firma_ok = verificar_firma_qr(int(visita_id), firma)
+
+    if not firma_ok:
+        return Response({'valido': False, 'mensaje': 'QR inválido o alterado.'}, status=403)
+
+    if visita.fecha_hora_salida:
+        return Response({'valido': False, 'mensaje': 'Esta visita ya fue finalizada.'})
+
+    # Ventana de validez (solo aplica a reservas a futuro, no a registros inmediatos)
+    if visita.ventana_no_iniciada:
+        return Response({
+            'valido': False,
+            'mensaje': f'Esta visita todavia no esta habilitada. Ingreso valido desde las {visita.hora_inicio}.',
+        }, status=403)
+    if visita.ventana_expirada:
+        if visita.estado == Visita.RESERVADA:
+            visita.estado = Visita.EXPIRADA
+            visita.save(update_fields=['estado'])
+        return Response({
+            'valido': False,
+            'mensaje': f'El QR expiro — la ventana de ingreso era hasta las {visita.hora_fin}.',
+        }, status=403)
+
+    # Consumir QR (anti-replay): se marca usado al primer escaneo exitoso
+    visita.qr_usado = True
+    visita.qr_usado_en = timezone.now()
+    visita.fecha_hora_entrada = visita.fecha_hora_entrada or timezone.now()
+    visita.estado = Visita.CONFIRMADA
+    visita.save(update_fields=['qr_usado', 'qr_usado_en', 'fecha_hora_entrada', 'estado'])
+
+    return Response({
+        'valido': True,
+        'mensaje': 'QR verificado correctamente.',
+        'visitante': visita.nombre_visitante,
+        'documento': visita.documento_visitante,
+        'vivienda': str(visita.vivienda_destino),
+        'fecha': visita.fecha_hora_entrada.strftime('%Y-%m-%d %H:%M'),
+        'cantidad_personas': visita.cantidad_personas,
+        'motivo': visita.motivo,
+        'autorizado_por': str(visita.residente_autoriza)
+    })
 
 
 
@@ -253,6 +264,20 @@ def crear_visita(request):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        if es_reserva:
+            try:
+                fecha_visita_parsed = date.fromisoformat(str(fecha_visita))
+            except ValueError:
+                return Response(
+                    {'error': 'fecha_visita invalida, use el formato YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if fecha_visita_parsed < timezone.localdate():
+                return Response(
+                    {'error': 'fecha_visita debe ser hoy o una fecha futura.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         try:
             cantidad_personas = int(cantidad_personas)

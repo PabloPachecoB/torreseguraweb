@@ -98,7 +98,15 @@ class Visita(models.Model):
         return timezone.now() < inicio
 
     def __str__(self):
-        return f"{self.nombre_visitante} - {self.vivienda_destino} - {self.fecha_hora_entrada.strftime('%d/%m/%Y %H:%M')}"
+        # fecha_hora_entrada es null en reservas a futuro (RESERVADA) que aun no
+        # confirman ingreso; en ese caso mostramos la fecha de la reserva.
+        if self.fecha_hora_entrada:
+            cuando = self.fecha_hora_entrada.strftime('%d/%m/%Y %H:%M')
+        elif self.fecha_visita:
+            cuando = f"reserva {self.fecha_visita.strftime('%d/%m/%Y')}"
+        else:
+            cuando = "sin fecha"
+        return f"{self.nombre_visitante} - {self.vivienda_destino} - {cuando}"
 
 class Puerta(models.Model):
     """Puerta controlable desde la app (principal, de edificio o de vivienda).

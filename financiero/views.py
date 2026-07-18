@@ -358,18 +358,24 @@ def generar_cuotas(request):
             
             # Monto a aplicar
             monto = monto_personalizado if monto_personalizado else concepto.monto_base
-            
-            # Crear cuotas para cada vivienda
+
+            # Precargar en UNA sola consulta las viviendas que ya tienen cuota
+            # de este concepto/fecha (antes se hacía un .exists() por vivienda).
+            ya_con_cuota = set(
+                Cuota.objects.filter(
+                    concepto=concepto, fecha_emision=fecha_emision,
+                    vivienda__in=viviendas,
+                ).values_list('vivienda_id', flat=True)
+            )
+
+            # Crear cuotas una por una (no bulk_create: Cuota.save() valida y la
+            # señal pre_save calcula el recargo — bulk_create se los saltaría).
+            # transaction.atomic: si algo falla, no quedan cuotas a medias.
             cuotas_creadas = 0
-            for vivienda in viviendas:
-                # Verificar si ya existe una cuota para esta vivienda con este concepto en la misma fecha
-                existe = Cuota.objects.filter(
-                    concepto=concepto,
-                    vivienda=vivienda,
-                    fecha_emision=fecha_emision
-                ).exists()
-                
-                if not existe:
+            with transaction.atomic():
+                for vivienda in viviendas:
+                    if vivienda.id in ya_con_cuota:
+                        continue
                     Cuota.objects.create(
                         concepto=concepto,
                         vivienda=vivienda,
@@ -378,7 +384,7 @@ def generar_cuotas(request):
                         fecha_vencimiento=fecha_vencimiento
                     )
                     cuotas_creadas += 1
-            
+
             messages.success(request, f'Se han generado {cuotas_creadas} cuotas exitosamente.')
             return redirect('cuota-list')
     else:
