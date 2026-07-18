@@ -2,7 +2,7 @@
 
 ![Django](https://img.shields.io/badge/django-%23092E20.svg?style=for-the-badge&logo=django&logoColor=white)
 ![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
-![PostgreSQL](https://img.shields.io/badge/postgresql-%23316192.svg?style=for-the-badge&logo=postgresql&logoColor=white)
+![SQLite](https://img.shields.io/badge/sqlite-%23003B57.svg?style=for-the-badge&logo=sqlite&logoColor=white)
 ![Bootstrap](https://img.shields.io/badge/bootstrap-%23563D7C.svg?style=for-the-badge&logo=bootstrap&logoColor=white)
 
 Sistema web Django para la administracion integral de condominios verticales. Incluye gestion de residentes, control de accesos, modulo financiero completo, areas comunes y reportes avanzados.
@@ -16,7 +16,7 @@ Sistema web Django para la administracion integral de condominios verticales. In
 | Backend | Django 4.2.10 + Django REST Framework 3.16 |
 | Auth web | Django AllAuth (Google OAuth) |
 | Auth API movil | SimpleJWT |
-| Base de datos | PostgreSQL (produccion) / SQLite (desarrollo) |
+| Base de datos | SQLite |
 | PDF | WeasyPrint + ReportLab |
 | Excel | Pandas + openpyxl |
 | Graficos | Matplotlib (backend) + Chart.js (frontend) |
@@ -149,7 +149,7 @@ El MVP usa Qwen, LangGraph y tools controladas para reservas e incidencias. La
 guía de configuración, API móvil y demo está en `docs/AGENT_MVP.md`. Componentes:
 
 - `agente.AgentAction`: acción auditable, confirmada e idempotente.
-- `agente/agent/`: estado, grafo, checkpoints PostgreSQL y servicio de conversación.
+- `agente/agent/`: estado, grafo, checkpoints SQLite y servicio de conversación.
 - `agente/agent/nlu.py`: clasificación y extracción Qwen validadas con Pydantic.
 - `agente/tools/`: tools tipadas para `Reserva` e `Incidencia`.
 - Endpoint de disponibilidad real de areas comunes (`GET /api/v1/areas-comunes/<id>/disponibilidad/`),
@@ -158,6 +158,9 @@ guía de configuración, API móvil y demo está en `docs/AGENT_MVP.md`. Compone
 
 Documentacion detallada de la API para quienes construyen el motor conversacional:
 `inst/api_documentation_huascar.md`.
+
+El estado y el orden de implementación de cerraduras y visitas están en
+`docs/AGENT_PROCESOS_PENDIENTES.md`.
 
 ### Roles y permisos
 

@@ -1,68 +1,62 @@
-"""Construccion del checkpointer de LangGraph."""
+"""Construcción del checkpointer durable de LangGraph sobre SQLite."""
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
+import sqlite3
 from threading import Lock
 from typing import Mapping, Optional
 
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-from psycopg_pool import ConnectionPool
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SQLITE_PATH = PROJECT_ROOT / "agent_checkpoints.sqlite3"
 
 
 @dataclass(frozen=True)
 class CheckpointSettings:
     backend: str
-    database_url: str
-    pool_max_size: int
+    sqlite_path: str
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None):
         values = environ if environ is not None else os.environ
-        backend = values.get("AGENT_CHECKPOINT_BACKEND", "memory").lower().strip()
-        if backend not in {"memory", "postgres"}:
+        backend = values.get("AGENT_CHECKPOINT_BACKEND", "sqlite").lower().strip()
+        if backend not in {"memory", "sqlite"}:
             raise ValueError(
-                "AGENT_CHECKPOINT_BACKEND debe ser 'memory' o 'postgres'."
+                "AGENT_CHECKPOINT_BACKEND debe ser 'memory' o 'sqlite'."
             )
 
-        database_url = values.get(
-            "AGENT_CHECKPOINT_DATABASE_URL",
-            values.get("DATABASE_URL", ""),
+        raw_path = values.get(
+            "AGENT_CHECKPOINT_SQLITE_PATH",
+            str(DEFAULT_SQLITE_PATH),
         ).strip()
-        if backend == "postgres" and not database_url:
-            raise ValueError(
-                "AGENT_CHECKPOINT_DATABASE_URL o DATABASE_URL es obligatorio "
-                "para checkpoints PostgreSQL."
-            )
-
-        try:
-            pool_max_size = int(values.get("AGENT_CHECKPOINT_POOL_MAX_SIZE", "4"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("AGENT_CHECKPOINT_POOL_MAX_SIZE no es valido.") from exc
-        if pool_max_size < 1:
-            raise ValueError("AGENT_CHECKPOINT_POOL_MAX_SIZE debe ser positivo.")
+        path = Path(raw_path or DEFAULT_SQLITE_PATH).expanduser()
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
 
         return cls(
             backend=backend,
-            database_url=database_url,
-            pool_max_size=pool_max_size,
+            sqlite_path=str(path.resolve()),
         )
 
 
 class CheckpointRuntime:
-    def __init__(self, saver, backend: str, pool=None):
+    def __init__(self, saver, backend: str, connection=None):
         self.saver = saver
         self.backend = backend
-        self.pool = pool
+        self.connection = connection
 
     @property
     def durable(self) -> bool:
-        return self.backend == "postgres"
+        return self.backend == "sqlite"
 
     def close(self):
-        if self.pool is not None:
-            self.pool.close()
+        if self.connection is not None:
+            self.connection.close()
 
 
 def build_checkpoint_runtime(
@@ -79,16 +73,21 @@ def build_checkpoint_runtime(
             backend="memory",
         )
 
-    pool = ConnectionPool(
-        conninfo=config.database_url,
-        min_size=1,
-        max_size=config.pool_max_size,
-        open=True,
-        kwargs={"autocommit": True, "prepare_threshold": 0},
+    sqlite_path = Path(config.sqlite_path)
+    sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(
+        sqlite_path,
+        timeout=30,
+        check_same_thread=False,
     )
-    saver = PostgresSaver(pool, serde=serializer)
+    connection.execute("PRAGMA busy_timeout=30000")
+    saver = SqliteSaver(connection, serde=serializer)
     saver.setup()
-    return CheckpointRuntime(saver=saver, backend="postgres", pool=pool)
+    return CheckpointRuntime(
+        saver=saver,
+        backend="sqlite",
+        connection=connection,
+    )
 
 
 _runtime = None

@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 import json
 import re
+from tempfile import TemporaryDirectory
 import unicodedata
 from unittest.mock import Mock, patch
 
@@ -17,7 +18,11 @@ from incidencias.models import Incidencia
 from usuarios.models import Rol
 from viviendas.models import Edificio, Residente, Vivienda
 
-from .agent.checkpoints import CheckpointRuntime, CheckpointSettings
+from .agent.checkpoints import (
+    CheckpointRuntime,
+    CheckpointSettings,
+    build_checkpoint_runtime,
+)
 from .agent.nlu import QwenNLU
 from .agent.service import AgentConversationService
 from .config import LLMSettings
@@ -281,8 +286,14 @@ class ObservabilityTest(TestCase):
 
 
 class CheckpointSettingsTest(TestCase):
-    def test_postgres_requiere_url(self):
-        with self.assertRaisesMessage(ValueError, 'DATABASE_URL'):
+    def test_sqlite_es_el_backend_durable_por_defecto(self):
+        config = CheckpointSettings.from_env({})
+
+        self.assertEqual(config.backend, 'sqlite')
+        self.assertTrue(config.sqlite_path.endswith('agent_checkpoints.sqlite3'))
+
+    def test_rechaza_backend_no_soportado(self):
+        with self.assertRaisesMessage(ValueError, "'memory' o 'sqlite'"):
             CheckpointSettings.from_env({'AGENT_CHECKPOINT_BACKEND': 'postgres'})
 
 
@@ -319,6 +330,38 @@ class AgentConversationServiceTest(TestCase):
         self.assertEqual(second['thread_id'], first['thread_id'])
         self.assertTrue(second['trace_metadata']['llm_invoked'])
         self.assertFalse(second['trace_metadata']['guardrail_triggered'])
+
+    def test_sqlite_reanuda_hilo_despues_de_cerrar_la_conexion(self):
+        with TemporaryDirectory() as directory:
+            settings = CheckpointSettings.from_env({
+                'AGENT_CHECKPOINT_BACKEND': 'sqlite',
+                'AGENT_CHECKPOINT_SQLITE_PATH': f'{directory}/checkpoints.sqlite3',
+            })
+            first_runtime = build_checkpoint_runtime(settings)
+            first_service = AgentConversationService(
+                runtime=first_runtime,
+                adapter=FakeQwenAdapter(),
+            )
+            first = first_service.chat(self.user, 'Hola durable')
+            first_runtime.close()
+
+            second_runtime = build_checkpoint_runtime(settings)
+            try:
+                second_service = AgentConversationService(
+                    runtime=second_runtime,
+                    adapter=FakeQwenAdapter(),
+                )
+                second = second_service.chat(
+                    self.user,
+                    '¿Qué dije antes?',
+                    thread_id=first['thread_id'],
+                )
+            finally:
+                second_runtime.close()
+
+        self.assertEqual(second['message'], 'Turnos recibidos: 2')
+        self.assertEqual(second['checkpoint_backend'], 'sqlite')
+        self.assertTrue(second['durable'])
 
     def test_hilo_esta_aislado_por_usuario(self):
         other_user = Usuario.objects.create_user(

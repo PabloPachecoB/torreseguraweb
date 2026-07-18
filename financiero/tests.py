@@ -106,6 +106,13 @@ class CuotaModelTest(TestCase):
         Cuota.objects.filter(pk=self.cuota.pk).update(recargo=Decimal('10.00'))
         self.cuota.refresh_from_db()
         self.assertEqual(self.cuota.total_a_pagar(), Decimal('110.00'))
+
+    def test_calcular_recargo_normaliza_valores_numericos(self):
+        """El calculo no debe fallar si un porcentaje llega como float."""
+        self.cuota.fecha_vencimiento = timezone.now().date() - timedelta(days=1)
+        self.cuota.concepto.porcentaje_recargo = 2.5
+
+        self.assertEqual(self.cuota.calcular_recargo(), Decimal('2.50'))
     
     def test_marcar_como_pagada(self):
         """Verificar que el método marcar_como_pagada funciona correctamente"""
@@ -492,6 +499,9 @@ class EstadoCuentaModelTest(TestCase):
             fecha_vencimiento=self.fecha_fin,
             recargo=Decimal('5.00')
         )
+        # Esta prueba cubre la agregación del estado de cuenta, no el cálculo
+        # automático de mora. Fijar el valor sin disparar la señal pre_save.
+        Cuota.objects.filter(pk=cuota2.pk).update(recargo=Decimal('5.00'))
         
         # Crear usuario residente
         usuario_residente = User.objects.create_user(

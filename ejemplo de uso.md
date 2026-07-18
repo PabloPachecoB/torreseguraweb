@@ -184,4 +184,6 @@ POST /api/v1/agente/acciones/{action_id}/confirmar/
 - **QA:** probar campos incompletos, rechazo, conflictos de horario, doble confirmación y acceso con otro usuario.
 - **Agente:** verificar `model_provider=qwen_cloud`, `llm_invoked=true` y que no se inventen IDs o estados.
 
-Mientras se use `memory`, el equipo no debe reiniciar Django entre turnos. Para pruebas con reinicios o varios workers será necesario activar PostgreSQL como checkpointer.
+El backend `sqlite` es durable: el equipo puede reiniciar Django y continuar el
+hilo con el mismo `thread_id`. `memory` queda reservado para pruebas unitarias
+aisladas; no se usa PostgreSQL para los checkpoints de conversación.

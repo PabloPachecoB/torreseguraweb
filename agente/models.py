@@ -1,5 +1,6 @@
 from django.conf import settings
-from django.db import models, transaction
+from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 
@@ -114,62 +115,69 @@ class AgentAction(models.Model):
         """Marca la accion como CONFIRMADA. Solo el usuario dueno puede confirmar
         (HU-01.2 / SEC-01) y solo si sigue PENDIENTE y no expiro.
         """
-        expired = False
-        with transaction.atomic():
-            action = AgentAction.objects.select_for_update().get(pk=self.pk)
-            if usuario.pk != action.usuario_id:
-                raise PermissionError('Solo el usuario dueno de la accion puede confirmarla.')
-            if action.esta_expirada:
-                action.estado_previo = action.estado
-                action.estado = self.EXPIRADA
-                action.save(update_fields=['estado', 'estado_previo'])
-                expired = True
-            elif action.estado != self.PENDIENTE:
-                raise ValueError(
-                    f'La accion no esta pendiente (estado actual: {action.estado}).'
-                )
-            else:
-                action.estado_previo = action.estado
-                action.estado = self.CONFIRMADA
-                action.fecha_confirmacion = timezone.now()
-                action.confirmada_por = usuario
-                action.save(
-                    update_fields=[
-                        'estado',
-                        'estado_previo',
-                        'fecha_confirmacion',
-                        'confirmada_por',
-                    ]
-                )
-        self._sync_transition_fields(action)
+        action = AgentAction.objects.get(pk=self.pk)
+        if usuario.pk != action.usuario_id:
+            raise PermissionError('Solo el usuario dueno de la accion puede confirmarla.')
+
+        now = timezone.now()
+        expired = AgentAction.objects.filter(
+            pk=self.pk,
+            usuario_id=usuario.pk,
+            estado=self.PENDIENTE,
+            expira_en__lt=now,
+        ).update(
+            estado_previo=self.PENDIENTE,
+            estado=self.EXPIRADA,
+        )
         if expired:
+            action.refresh_from_db()
+            self._sync_transition_fields(action)
             raise ValueError('La accion ya expiro y no puede confirmarse.')
+
+        updated = (
+            AgentAction.objects.filter(
+                pk=self.pk,
+                usuario_id=usuario.pk,
+                estado=self.PENDIENTE,
+            )
+            .filter(Q(expira_en__isnull=True) | Q(expira_en__gte=now))
+            .update(
+                estado_previo=self.PENDIENTE,
+                estado=self.CONFIRMADA,
+                fecha_confirmacion=now,
+                confirmada_por=usuario,
+            )
+        )
+        action.refresh_from_db()
+        self._sync_transition_fields(action)
+        if not updated:
+            raise ValueError(
+                f'La accion no esta pendiente (estado actual: {action.estado}).'
+            )
         return self
 
     def rechazar(self, usuario):
         """Marca la accion como RECHAZADA. Mismo control de dueno que confirmar()."""
-        with transaction.atomic():
-            action = AgentAction.objects.select_for_update().get(pk=self.pk)
-            if usuario.pk != action.usuario_id:
-                raise PermissionError('Solo el usuario dueno de la accion puede rechazarla.')
-            if action.estado != self.PENDIENTE:
-                raise ValueError(
-                    f'La accion no esta pendiente (estado actual: {action.estado}).'
-                )
+        action = AgentAction.objects.get(pk=self.pk)
+        if usuario.pk != action.usuario_id:
+            raise PermissionError('Solo el usuario dueno de la accion puede rechazarla.')
 
-            action.estado_previo = action.estado
-            action.estado = self.RECHAZADA
-            action.fecha_confirmacion = timezone.now()
-            action.confirmada_por = usuario
-            action.save(
-                update_fields=[
-                    'estado',
-                    'estado_previo',
-                    'fecha_confirmacion',
-                    'confirmada_por',
-                ]
-            )
+        updated = AgentAction.objects.filter(
+            pk=self.pk,
+            usuario_id=usuario.pk,
+            estado=self.PENDIENTE,
+        ).update(
+            estado_previo=self.PENDIENTE,
+            estado=self.RECHAZADA,
+            fecha_confirmacion=timezone.now(),
+            confirmada_por=usuario,
+        )
+        action.refresh_from_db()
         self._sync_transition_fields(action)
+        if not updated:
+            raise ValueError(
+                f'La accion no esta pendiente (estado actual: {action.estado}).'
+            )
         return self
 
     def _sync_transition_fields(self, action):

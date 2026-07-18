@@ -15,15 +15,18 @@ python manage.py check_agent_model
 python manage.py runserver
 ```
 
-Para desarrollo use `LLM_PROVIDER=qwen_local`, `QWEN_BASE_URL=http://127.0.0.1:11434/v1` y `AGENT_CHECKPOINT_BACKEND=memory`. Memoria no sobrevive al reinicio del proceso. Para la demo durable configure:
+Para desarrollo local puede usar Qwen local o cloud. Las conversaciones se
+persisten por defecto en un archivo SQLite separado de la base de dominio:
 
 ```env
-AGENT_CHECKPOINT_BACKEND=postgres
-AGENT_CHECKPOINT_DATABASE_URL=postgresql://usuario:clave@host:5432/torresegura
+AGENT_CHECKPOINT_BACKEND=sqlite
+AGENT_CHECKPOINT_SQLITE_PATH=agent_checkpoints.sqlite3
 LANGGRAPH_STRICT_MSGPACK=true
 ```
 
-El primer arranque ejecuta `PostgresSaver.setup()` de forma idempotente.
+El primer arranque crea de forma idempotente las tablas `checkpoints` y
+`writes`. El archivo está ignorado por Git. `memory` queda disponible solo para
+pruebas aisladas que no requieran sobrevivir al reinicio del proceso.
 
 ## Contrato móvil
 
@@ -78,4 +81,6 @@ python manage.py check_agent_model
 python manage.py validate_agent_dataset
 ```
 
-El dataset reproducible está en `agente/evaluation/dataset.json`. PostgreSQL debe estar disponible para validar persistencia real entre procesos; con `memory` solo se prueba reanudación al reconstruir el grafo dentro del proceso.
+El dataset reproducible está en `agente/evaluation/dataset.json`. La suite del
+agente valida que un thread guardado en SQLite se reanude después de cerrar y
+abrir una conexión nueva.

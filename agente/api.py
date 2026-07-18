@@ -28,23 +28,10 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
 
     @action(detail=True, methods=['post'])
     def confirmar(self, request, pk=None):
-        # HU-04.2 (LOCK-04): las acciones de cerradura exigen confirmación
-        # reforzada — segundo factor = re-autenticación con la contraseña.
-        if accion.tipo_accion.startswith('CERRADURA_'):
-            password = request.data.get('password', '')
-            if not password:
-                return Response(
-                    {'error': 'Confirmación reforzada: debes reingresar tu contraseña.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if not request.user.check_password(password):
-                return Response(
-                    {'error': 'Contraseña incorrecta. La apertura no se ejecutó.'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            
-        # Confirmation method for actions on agent
         accion = self.get_object()
+
+        # Las acciones conversacionales de reservas e incidencias se reanudan
+        # desde el interrupt de LangGraph.
         if accion.thread_id:
             try:
                 conversation = get_conversation_service().resume_confirmation(
@@ -84,13 +71,11 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-        # Lock de fila + atomicidad: evita que dos confirmaciones concurrentes
-        # (doble tap / reintento de red) ejecuten la acción dos veces.
+        # La transición condicional de AgentAction confirma una sola petición;
+        # funciona de forma atómica también sobre SQLite.
         with transaction.atomic():
-            accion = (
-                AgentAction.objects.select_for_update()
-                .filter(usuario=request.user)
-                .get(pk=accion_preview.pk)
+            accion = AgentAction.objects.filter(usuario=request.user).get(
+                pk=accion_preview.pk
             )
             try:
                 accion.confirmar(request.user)

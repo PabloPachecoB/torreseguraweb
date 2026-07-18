@@ -158,7 +158,12 @@ class OllamaLocalAdapter(QwenAdapter):
         timeout: Optional[float] = None,
         api_key: Optional[str] = None,
     ):
-        defaults = LLMSettings.from_env()
+        configured = LLMSettings.from_env()
+        defaults = (
+            configured
+            if configured.provider == "qwen_local"
+            else LLMSettings.from_env({})
+        )
         settings = LLMSettings(
             provider="qwen_local",
             model=model or defaults.model,

@@ -444,6 +444,15 @@ class ReservaVisitaApiTest(TestCase):
         self.assertIsNone(visita.fecha_hora_entrada)
         self.assertEqual(visita.cantidad_personas, 3)
 
+    def test_reserva_futura_permanece_visible_en_listado_movil(self):
+        response = self._reservar()
+        visita_id = response.data['id']
+
+        listado = self.client.get(reverse('visitantes-list'))
+
+        self.assertEqual(listado.status_code, 200)
+        self.assertIn(visita_id, [item['id'] for item in listado.data])
+
     def test_sin_campos_de_reserva_mantiene_comportamiento_inmediato(self):
         response = self._reservar(fecha_visita=None, hora_inicio=None, hora_fin=None)
         self.assertEqual(response.status_code, 200)

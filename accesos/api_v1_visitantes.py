@@ -79,9 +79,17 @@ class VisitanteViewSet(viewsets.ModelViewSet):
             else:
                 raise ValueError("status inválido. Use pending|scanned|departed")
 
-        # Filtro por rango de fechas (máximo 1 mes hacia atrás)
+        # Filtro por rango de fechas (máximo 1 mes hacia atrás). Las reservas
+        # futuras todavía no tienen fecha_hora_entrada y deben seguir visibles.
         un_mes_atras = timezone.now() - timedelta(days=30)
-        qs = qs.filter(fecha_hora_entrada__gte=un_mes_atras)
+        fecha_limite = timezone.localdate() - timedelta(days=30)
+        qs = qs.filter(
+            Q(fecha_hora_entrada__gte=un_mes_atras)
+            | Q(
+                fecha_hora_entrada__isnull=True,
+                fecha_visita__gte=fecha_limite,
+            )
+        )
 
         # Filtro opcional: search (nombre o documento del visitante)
         search = self.request.query_params.get("search")
