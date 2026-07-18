@@ -27,6 +27,22 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
 
     @action(detail=True, methods=['post'])
     def confirmar(self, request, pk=None):
+        # HU-04.2 (LOCK-04): las acciones de cerradura exigen confirmación
+        # reforzada — segundo factor = re-autenticación con la contraseña.
+        if accion.tipo_accion.startswith('CERRADURA_'):
+            password = request.data.get('password', '')
+            if not password:
+                return Response(
+                    {'error': 'Confirmación reforzada: debes reingresar tu contraseña.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not request.user.check_password(password):
+                return Response(
+                    {'error': 'Contraseña incorrecta. La apertura no se ejecutó.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            
+        # Confirmation method for actions on agent
         accion = self.get_object()
         if accion.thread_id:
             try:
@@ -50,20 +66,6 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
             payload['conversation'] = conversation
             return Response(payload)
 
-        # HU-04.2 (LOCK-04): las acciones de cerradura exigen confirmación
-        # reforzada — segundo factor = re-autenticación con la contraseña.
-        if accion.tipo_accion.startswith('CERRADURA_'):
-            password = request.data.get('password', '')
-            if not password:
-                return Response(
-                    {'error': 'Confirmación reforzada: debes reingresar tu contraseña.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if not request.user.check_password(password):
-                return Response(
-                    {'error': 'Contraseña incorrecta. La apertura no se ejecutó.'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
 
         try:
             accion.confirmar(request.user)
