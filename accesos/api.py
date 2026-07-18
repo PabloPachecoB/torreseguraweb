@@ -1,3 +1,5 @@
+from datetime import date
+
 from django.http import JsonResponse
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
@@ -262,6 +264,20 @@ def crear_visita(request):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        if es_reserva:
+            try:
+                fecha_visita_parsed = date.fromisoformat(str(fecha_visita))
+            except ValueError:
+                return Response(
+                    {'error': 'fecha_visita invalida, use el formato YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if fecha_visita_parsed < timezone.localdate():
+                return Response(
+                    {'error': 'fecha_visita debe ser hoy o una fecha futura.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         try:
             cantidad_personas = int(cantidad_personas)

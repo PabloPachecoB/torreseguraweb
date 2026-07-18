@@ -44,6 +44,7 @@ class ReservaSerializer(serializers.ModelSerializer):
             "hora_inicio",
             "hora_fin",
             "estado",
+            "cantidad_personas",
             "motivo",
             "created_at",
         ]

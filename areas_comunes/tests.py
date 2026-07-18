@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -13,6 +13,7 @@ from .models import AreaComun, Reserva
 Usuario = get_user_model()
 
 
+@override_settings(SECURE_SSL_REDIRECT=False)
 class DisponibilidadApiTest(TestCase):
     def setUp(self):
         self.edificio = Edificio.objects.create(nombre='Torre Test', direccion='Calle 1', pisos=5)
@@ -112,6 +113,7 @@ class DisponibilidadApiTest(TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+@override_settings(SECURE_SSL_REDIRECT=False)
 class CrearReservaApiTest(TestCase):
     def setUp(self):
         self.edificio = Edificio.objects.create(nombre='Torre Test', direccion='Calle 1', pisos=5)
@@ -159,3 +161,54 @@ class CrearReservaApiTest(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(Reserva.objects.filter(area_comun=self.area_otro_edificio).count(), 0)
+
+    def test_idempotency_key_no_duplica_reserva(self):
+        payload = {
+            'fecha': self.manana.isoformat(),
+            'hora_inicio': '09:00',
+            'hora_fin': '10:00',
+            'cantidad_personas': 5,
+        }
+
+        first = self.client.post(
+            self._url(self.area_propia.pk),
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='reserva-api-test',
+        )
+        second = self.client.post(
+            self._url(self.area_propia.pk),
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='reserva-api-test',
+        )
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(second.data['replayed'])
+        self.assertEqual(Reserva.objects.count(), 1)
+
+    def test_idempotency_key_rechaza_parametros_distintos(self):
+        payload = {
+            'fecha': self.manana.isoformat(),
+            'hora_inicio': '11:00',
+            'hora_fin': '12:00',
+            'cantidad_personas': 5,
+        }
+        self.client.post(
+            self._url(self.area_propia.pk),
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='reserva-api-conflict',
+        )
+        changed = dict(payload, cantidad_personas=8)
+
+        response = self.client.post(
+            self._url(self.area_propia.pk),
+            changed,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='reserva-api-conflict',
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(Reserva.objects.count(), 1)

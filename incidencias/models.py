@@ -46,12 +46,33 @@ class Incidencia(models.Model):
         (CANCELADA, 'Cancelada'),
     ]
 
+    URGENCIA_BAJA = 'BAJA'
+    URGENCIA_MEDIA = 'MEDIA'
+    URGENCIA_ALTA = 'ALTA'
+    URGENCIA_CRITICA = 'CRITICA'
+    URGENCIAS = [
+        (URGENCIA_BAJA, 'Baja'),
+        (URGENCIA_MEDIA, 'Media'),
+        (URGENCIA_ALTA, 'Alta'),
+        (URGENCIA_CRITICA, 'Crítica'),
+    ]
+
     residente = models.ForeignKey(
         Residente, on_delete=models.CASCADE, related_name='incidencias',
     )
     categoria = models.CharField(max_length=20, choices=CATEGORIAS, default=OTRO)
     titulo = models.CharField(max_length=150)
     descripcion = models.TextField()
+    ubicacion = models.CharField(max_length=200, blank=True, default='')
+    urgencia = models.CharField(max_length=10, choices=URGENCIAS, default=URGENCIA_MEDIA)
+    estimacion_preliminar = models.JSONField(default=dict, blank=True)
+    idempotency_key = models.CharField(
+        max_length=64,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text='Evita crear dos incidencias para una misma solicitud.',
+    )
     estado = models.CharField(max_length=15, choices=ESTADOS, default=REPORTADA)
 
     fecha_creacion = models.DateTimeField(auto_now_add=True)

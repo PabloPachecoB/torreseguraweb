@@ -2,6 +2,9 @@
 venv/
 env/
 .env
+.env.repo
+.env.*
+!.env.example
 # Archivos de Python
 __pycache__/
 *.py[cod]
@@ -55,3 +58,10 @@ node_modules/
 staticfiles/
 mediafiles/
 backup_data.json
+
+# Agent Knowledge
+.agent.md
+AGENTS.md
+.venv
+.codex
+.agents

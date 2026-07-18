@@ -1,5 +1,7 @@
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.utils import timezone
+from django.utils.dateparse import parse_time
 from viviendas.models import Edificio, Residente
 
 
@@ -43,7 +45,15 @@ class Reserva(models.Model):
     hora_inicio = models.TimeField()
     hora_fin = models.TimeField()
     estado = models.CharField(max_length=20, choices=ESTADOS, default="confirmada")
+    cantidad_personas = models.PositiveIntegerField(default=1)
     motivo = models.CharField(max_length=200, blank=True)
+    idempotency_key = models.CharField(
+        max_length=64,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="Evita crear dos reservas para una misma solicitud.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -57,10 +67,37 @@ class Reserva(models.Model):
         ]
 
     def clean(self):
+        if self.fecha and self.fecha < timezone.localdate():
+            raise ValidationError({"fecha": "La fecha no puede estar en el pasado."})
+
         if self.hora_fin <= self.hora_inicio:
             raise ValidationError(
                 {"hora_fin": "La hora de fin debe ser mayor a la hora de inicio."}
             )
+
+        if self.area_comun_id:
+            area_start = self.area_comun.horario_inicio
+            area_end = self.area_comun.horario_fin
+            if isinstance(area_start, str):
+                area_start = parse_time(area_start)
+            if isinstance(area_end, str):
+                area_end = parse_time(area_end)
+            if self.hora_inicio < area_start:
+                raise ValidationError(
+                    {"hora_inicio": "La hora de inicio está fuera del horario del área."}
+                )
+            if self.hora_fin > area_end:
+                raise ValidationError(
+                    {"hora_fin": "La hora de fin está fuera del horario del área."}
+                )
+            if self.cantidad_personas > self.area_comun.capacidad_maxima:
+                raise ValidationError(
+                    {
+                        "cantidad_personas": (
+                            "La cantidad de personas supera la capacidad del área."
+                        )
+                    }
+                )
 
         solapadas = Reserva.objects.filter(
             area_comun=self.area_comun,

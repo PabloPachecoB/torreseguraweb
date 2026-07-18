@@ -143,18 +143,18 @@ Endpoints JWT para la app React Native:
 | `/api/v1/financiero/` | Cuotas pendientes/pagadas, registrar pagos |
 | `/api/v1/agente/acciones/` | Listar, confirmar o rechazar acciones propuestas por el agente conversacional |
 
-### Agente conversacional (epica en desarrollo)
+### Agente conversacional
 
-Se esta construyendo un agente conversacional sobre el sistema existente (reservas
-por chat, reporte de incidencias, control de cerradura). Backlog completo en
-`inst/Plan_Ejecucion_5_Dias_TorreSegura_Agente_EP_HU.xlsm - Epicas y HU.csv`.
-Avance actual:
+El MVP usa Qwen, LangGraph y tools controladas para reservas e incidencias. La
+guía de configuración, API móvil y demo está en `docs/AGENT_MVP.md`. Componentes:
 
-- `agente.AgentAction`: fila de estado (no un log) que representa una accion
-  propuesta al residente, con flujo `PENDIENTE -> CONFIRMADA/RECHAZADA/EJECUTADA/EXPIRADA`.
+- `agente.AgentAction`: acción auditable, confirmada e idempotente.
+- `agente/agent/`: estado, grafo, checkpoints PostgreSQL y servicio de conversación.
+- `agente/agent/nlu.py`: clasificación y extracción Qwen validadas con Pydantic.
+- `agente/tools/`: tools tipadas para `Reserva` e `Incidencia`.
 - Endpoint de disponibilidad real de areas comunes (`GET /api/v1/areas-comunes/<id>/disponibilidad/`),
   que calcula horarios libres y propone fechas alternativas sin inventar datos.
-- Control de puertas (`accesos.Puerta`/`AperturaPuerta`) con webhook a hardware ESP32.
+- Control de puertas (`accesos.Puerta`/`AperturaPuerta`) queda como P1 con hardware.
 
 Documentacion detallada de la API para quienes construyen el motor conversacional:
 `inst/api_documentation_huascar.md`.

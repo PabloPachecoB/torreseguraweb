@@ -460,6 +460,16 @@ class ReservaVisitaApiTest(TestCase):
         response = self._reservar(cantidad_personas=0)
         self.assertEqual(response.status_code, 400)
 
+    def test_fecha_visita_pasada_da_400(self):
+        ayer = (date.today() - timedelta(days=1)).isoformat()
+        response = self._reservar(fecha_visita=ayer)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Visita.objects.filter(fecha_visita=ayer).count(), 0)
+
+    def test_fecha_visita_invalida_da_400(self):
+        response = self._reservar(fecha_visita='no-es-una-fecha')
+        self.assertEqual(response.status_code, 400)
+
     def _verificar_qr(self, visita):
         self.client.force_authenticate(self.vigilante_user)
         return self.client.post(
