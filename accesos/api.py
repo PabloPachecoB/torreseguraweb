@@ -1,23 +1,22 @@
-from datetime import date
+import base64
+import io
+import json
 
-from django.http import JsonResponse
+import qrcode
+from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.contrib.auth.decorators import login_required
-from .models import Visita, MovimientoResidente
-from viviendas.models import Residente, Vivienda
-from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
 from django.utils import timezone
-import qrcode
-import io
-import base64
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+
 from accesos.qr_firma_utils import generar_firma_qr, verificar_firma_qr
-import json
+from viviendas.models import Residente, Vivienda
+
+from .models import MovimientoResidente, Visita
 
 @login_required
 def historial_visitas(request):
@@ -237,119 +236,104 @@ def crear_visita(request):
     horaria (`hora_inicio`-`hora_fin` de `fecha_visita`) y `fecha_hora_entrada`
     queda vacia hasta que el vigilante confirme el ingreso real por QR.
     """
-    try:
-        data = request.data
-        nombre = data.get('nombre_visitante')
-        documento = data.get('documento_visitante')
-        vivienda_id = data.get('vivienda_destino_id')
-        motivo = data.get('motivo', '')
-        cantidad_personas = data.get('cantidad_personas', 1)
-        fecha_visita = data.get('fecha_visita')
-        hora_inicio = data.get('hora_inicio')
-        hora_fin = data.get('hora_fin')
+    data = request.data
+    nombre = data.get('nombre_visitante')
+    documento = data.get('documento_visitante')
+    vivienda_id = data.get('vivienda_destino_id')
+    fecha_visita = data.get('fecha_visita')
+    hora_inicio = data.get('hora_inicio')
+    hora_fin = data.get('hora_fin')
+    if not all([nombre, documento, vivienda_id]):
+        return Response({'error': 'Faltan datos obligatorios'}, status=400)
 
-        if not all([nombre, documento, vivienda_id]):
-            return Response({'error': 'Faltan datos obligatorios'}, status=status.HTTP_400_BAD_REQUEST)
+    es_reserva = bool(fecha_visita or hora_inicio or hora_fin)
+    if es_reserva and not all([fecha_visita, hora_inicio, hora_fin]):
+        missing = [
+            key for key, value in (
+                ('fecha_visita', fecha_visita),
+                ('hora_inicio', hora_inicio),
+                ('hora_fin', hora_fin),
+            ) if not value
+        ]
+        return Response(
+            {
+                'error': 'Para reservar a futuro son obligatorios fecha_visita, hora_inicio y hora_fin.',
+                'campos_faltantes': missing,
+            },
+            status=400,
+        )
 
-        es_reserva = bool(fecha_visita or hora_inicio or hora_fin)
-        if es_reserva and not all([fecha_visita, hora_inicio, hora_fin]):
-            return Response(
-                {
-                    'error': 'Para reservar a futuro son obligatorios fecha_visita, hora_inicio y hora_fin.',
-                    'campos_faltantes': [
-                        c for c, v in [
-                            ('fecha_visita', fecha_visita), ('hora_inicio', hora_inicio), ('hora_fin', hora_fin),
-                        ] if not v
-                    ],
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    from .services import create_visit_authorization
 
-        if es_reserva:
-            try:
-                fecha_visita_parsed = date.fromisoformat(str(fecha_visita))
-            except ValueError:
-                return Response(
-                    {'error': 'fecha_visita invalida, use el formato YYYY-MM-DD.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if fecha_visita_parsed < timezone.localdate():
-                return Response(
-                    {'error': 'fecha_visita debe ser hoy o una fecha futura.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
+    idempotency_key = request.headers.get('Idempotency-Key') or None
+    if es_reserva:
+        result = create_visit_authorization(
+            request.user,
+            {
+                'name': nombre,
+                'document': documento,
+                'apartment_id': vivienda_id,
+                'attendees': data.get('cantidad_personas', 1),
+                'date': fecha_visita,
+                'start_time': hora_inicio,
+                'end_time': hora_fin,
+                'reason': data.get('motivo', ''),
+            },
+            idempotency_key=idempotency_key,
+        )
+        if result['status'] != 'success':
+            status_code = 403 if result['status'] == 'unauthorized' else 409 if result['status'] == 'conflict' else 400
+            return Response({'error': result['message'], 'error_code': result['error_code']}, status=status_code)
+        visita = Visita.objects.get(pk=result['visit_id'])
+    else:
         try:
-            cantidad_personas = int(cantidad_personas)
+            cantidad_personas = int(data.get('cantidad_personas', 1))
             if cantidad_personas < 1:
                 raise ValueError
-        except (TypeError, ValueError):
-            return Response({'error': 'cantidad_personas debe ser un entero mayor o igual a 1.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        vivienda = Vivienda.objects.get(pk=vivienda_id)
-        residente = Residente.objects.get(usuario=request.user)
-
-        # Validar que el residente solo cree visitas para su propia vivienda
-        if vivienda.id != residente.vivienda_id:
-            return Response({'error': 'Solo puede registrar visitas para su propia vivienda'}, status=status.HTTP_403_FORBIDDEN)
-
-        visita = Visita(
-            nombre_visitante=nombre,
-            documento_visitante=documento,
-            vivienda_destino=vivienda,
-            residente_autoriza=residente,
-            motivo=motivo,
-            registrado_por=request.user,
-            cantidad_personas=cantidad_personas,
-        )
-        if es_reserva:
-            visita.fecha_visita = fecha_visita
-            visita.hora_inicio = hora_inicio
-            visita.hora_fin = hora_fin
-            visita.estado = Visita.RESERVADA
-            visita.fecha_hora_entrada = None
-        else:
-            visita.estado = Visita.CONFIRMADA
-            visita.fecha_hora_entrada = timezone.now()
-
-        try:
+            residente = Residente.objects.get(usuario=request.user, activo=True)
+            if int(vivienda_id) != residente.vivienda_id:
+                return Response({'error': 'Solo puede registrar visitas para su propia vivienda'}, status=403)
+            visita = Visita(
+                nombre_visitante=nombre,
+                documento_visitante=documento,
+                vivienda_destino=residente.vivienda,
+                residente_autoriza=residente,
+                motivo=data.get('motivo', ''),
+                registrado_por=request.user,
+                cantidad_personas=cantidad_personas,
+                estado=Visita.CONFIRMADA,
+                fecha_hora_entrada=timezone.now(),
+                idempotency_key=idempotency_key,
+            )
             visita.full_clean()
-        except DjangoValidationError as e:
-            msg = " ".join(
-                f"{v[0]}" if isinstance(v, list) else str(v) for v in e.message_dict.values()
-            ) if hasattr(e, 'message_dict') else str(e)
-            return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
-        visita.save()
+            visita.save()
+        except (TypeError, ValueError):
+            return Response({'error': 'cantidad_personas debe ser un entero mayor o igual a 1.'}, status=400)
+        except Residente.DoesNotExist:
+            return Response({'error': 'Residente no autorizado'}, status=403)
+        except DjangoValidationError as exc:
+            return Response({'error': str(exc)}, status=400)
 
-        # 📦 Generar el QR (anti-replay)
-        qr_payload = {
-            "id": visita.id,
-            "nonce": visita.qr_nonce,
-            "firma": generar_firma_qr(visita.id, nonce=visita.qr_nonce),
-        }
-        qr = qrcode.make(json.dumps(qr_payload))
-        buffer = io.BytesIO()
-        qr.save(buffer, format='PNG')
-        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
-
-        return Response({
-            'mensaje': 'Visita reservada correctamente' if es_reserva else 'Visita registrada correctamente',
-            'id': visita.id,
-            'estado': visita.estado,
-            'cantidad_personas': visita.cantidad_personas,
-            'fecha_visita': visita.fecha_visita,
-            'hora_inicio': visita.hora_inicio,
-            'hora_fin': visita.hora_fin,
-            'qr_base64': qr_base64,
-            # útil para testing en Postman y para apps que no quieran decodificar el PNG
-            'qr_payload': qr_payload,
-        })
-
-    except Vivienda.DoesNotExist:
-        return Response({'error': 'Vivienda no encontrada'}, status=status.HTTP_404_NOT_FOUND)
-    except Residente.DoesNotExist:
-        return Response({'error': 'Residente no autorizado'}, status=status.HTTP_403_FORBIDDEN)
-    except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    qr_payload = {
+        'id': visita.pk,
+        'nonce': visita.qr_nonce,
+        'firma': generar_firma_qr(visita.pk, nonce=visita.qr_nonce),
+    }
+    qr = qrcode.make(json.dumps(qr_payload))
+    buffer = io.BytesIO()
+    qr.save(buffer, format='PNG')
+    qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+    return Response({
+        'mensaje': 'Visita reservada correctamente' if es_reserva else 'Visita registrada correctamente',
+        'id': visita.pk,
+        'estado': visita.estado,
+        'cantidad_personas': visita.cantidad_personas,
+        'fecha_visita': visita.fecha_visita,
+        'hora_inicio': visita.hora_inicio,
+        'hora_fin': visita.hora_fin,
+        'qr_base64': qr_base64,
+        'qr_payload': qr_payload,
+        'replayed': bool(es_reserva and result.get('replayed')),
+    })
 
 # vehiculo? crear visita para usuarios con vehiculo.

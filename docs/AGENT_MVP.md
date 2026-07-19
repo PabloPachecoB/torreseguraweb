@@ -42,8 +42,8 @@ Content-Type: application/json
 
 Conserve el `thread_id` devuelto. Si `status=awaiting_confirmation`, muestre `message` y `confirmation`; no interprete un “sí” de texto como consentimiento. Use el `action_id` autenticado:
 
-`trace_metadata.llm_invoked` indica si el turno realizó una inferencia. Reservas
-e incidencias usan Qwen para clasificación y extracción JSON validada con
+`trace_metadata.llm_invoked` indica si el turno realizó una inferencia. Los cuatro
+procesos usan Qwen para clasificación y extracción JSON validada con
 Pydantic. Qwen no autoriza ni ejecuta: disponibilidad, permisos, confirmación,
 escritura y verificación pertenecen a las tools Django. En respuestas generales,
 una guardia determinista reemplaza afirmaciones de ejecución no respaldadas;
@@ -54,7 +54,17 @@ POST /api/v1/agente/acciones/{action_id}/confirmar/
 POST /api/v1/agente/acciones/{action_id}/rechazar/
 ```
 
-La confirmación crea y verifica una sola reserva o incidencia. Para evidencia de una incidencia ya creada:
+La confirmación crea y verifica una sola operación. Las cerraduras requieren la
+contraseña en el cuerpo del endpoint de confirmación:
+
+```http
+POST /api/v1/agente/acciones/{action_id}/confirmar/
+Content-Type: application/json
+
+{"password":"contraseña-del-usuario"}
+```
+
+La contraseña no se guarda en el thread. Para evidencia de una incidencia ya creada:
 
 Si el usuario cambia parámetros después del resumen, primero rechace la acción
 pendiente y envíe nuevamente la solicitud completa. El backend no acepta texto
@@ -66,6 +76,17 @@ Content-Type: multipart/form-data
 evidencias=<archivo>
 ```
 
+La llegada de una visita autorizada usa endpoints separados del chat:
+
+```http
+POST /api/v1/visitantes/{visit_id}/report-arrival/  # vigilante/admin; photo opcional
+POST /api/v1/visitantes/{visit_id}/approve/         # residente autorizador
+POST /api/v1/visitantes/{visit_id}/reject/          # residente autorizador
+```
+
+`notificationStatus=REGISTRADA_LOCAL` significa que la app puede consultar la
+llegada por polling; no representa una entrega push externa.
+
 ## Qwen Cloud y observabilidad
 
 Cambiar a Qwen Cloud solo requiere `LLM_PROVIDER=qwen_cloud`, `QWEN_MODEL`, `QWEN_BASE_URL` y `QWEN_API_KEY`; el grafo y las tools no cambian.
@@ -75,7 +96,7 @@ LangSmith está apagado por defecto. Al definir `LANGSMITH_TRACING=true` y `LANG
 ## Verificación
 
 ```bash
-python manage.py test agente areas_comunes incidencias
+python manage.py test agente areas_comunes incidencias accesos
 python manage.py makemigrations --check --dry-run
 python manage.py check_agent_model
 python manage.py validate_agent_dataset

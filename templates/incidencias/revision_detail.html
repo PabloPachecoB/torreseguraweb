@@ -1,0 +1,162 @@
+{% extends 'base.html' %}
+
+{% block title %}Incidencia #{{ incidencia.id }} | TorreSegura{% endblock %}
+{% block header %}Incidencia #{{ incidencia.id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .detail-card { border: 0; border-top: 3px solid #21409a; }
+    .approval-line { position: relative; padding-left: 2.25rem; padding-bottom: 1.25rem; }
+    .approval-line:not(:last-child)::before { content: ''; position: absolute; left: .7rem; top: 1.4rem; bottom: -.1rem; border-left: 2px solid #dee2e6; }
+    .approval-icon { position: absolute; left: 0; top: 0; width: 1.45rem; height: 1.45rem; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: .7rem; }
+    .summary-row { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem 0; border-bottom: 1px solid #edf0f4; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+        <a href="{% url 'incidencia-revision-list' %}" class="text-decoration-none small">
+            <i class="fas fa-arrow-left me-1"></i> Volver a incidencias
+        </a>
+        <h2 class="h4 mt-2 mb-1">{{ incidencia.titulo }}</h2>
+        <div class="text-muted">
+            {{ incidencia.residente.vivienda.edificio.nombre }} · Vivienda {{ incidencia.residente.vivienda.numero }} ·
+            {{ incidencia.fecha_creacion|date:'d/m/Y H:i' }}
+        </div>
+    </div>
+    <span class="badge fs-6 {% if incidencia.estado == 'APROBADA' %}bg-success{% elif incidencia.estado == 'EN_REVISION' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+        {{ incidencia.get_estado_display }}
+    </span>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="card detail-card shadow-sm mb-4">
+            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                <h3 class="h5 mb-0"><i class="fas fa-clipboard-check text-primary me-2"></i>Evaluación actual</h3>
+                <span class="badge bg-primary">Versión {{ revision.version }}</span>
+            </div>
+            <div class="card-body">
+                <div class="summary-row"><span class="text-muted">Categoría</span><strong>{{ revision.get_categoria_display }}</strong></div>
+                <div class="summary-row"><span class="text-muted">Prioridad</span><strong>{{ revision.get_prioridad_display }}</strong></div>
+                <div class="summary-row"><span class="text-muted">Costo estimado</span><strong>
+                    {% if revision.costo_estimado_min != None or revision.costo_estimado_max != None %}
+                        {{ revision.moneda }} {{ revision.costo_estimado_min|default:'—' }} – {{ revision.costo_estimado_max|default:'—' }}
+                    {% else %}Pendiente de inspección{% endif %}
+                </strong></div>
+                <div class="summary-row"><span class="text-muted">Tiempo estimado</span><strong>{{ revision.tiempo_estimado_horas|default:'—' }}{% if revision.tiempo_estimado_horas %} h{% endif %}</strong></div>
+                <div class="summary-row"><span class="text-muted">Técnico asignado</span><strong>
+                    {% if incidencia.empleado_asignado %}{{ incidencia.empleado_asignado.nombre_completo }}{% else %}Sin asignar{% endif %}
+                </strong></div>
+                {% if revision.comentario %}
+                    <div class="alert alert-light border mt-3 mb-0"><strong>Comentario:</strong> {{ revision.comentario }}</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white py-3"><h3 class="h5 mb-0"><i class="fas fa-triangle-exclamation text-warning me-2"></i>Reporte del residente</h3></div>
+            <div class="card-body">
+                <p>{{ incidencia.descripcion|linebreaksbr }}</p>
+                <dl class="row mb-0">
+                    <dt class="col-sm-3">Residente</dt><dd class="col-sm-9">{{ incidencia.residente.usuario.get_full_name|default:incidencia.residente.usuario.username }}</dd>
+                    <dt class="col-sm-3">Ubicación</dt><dd class="col-sm-9">{{ incidencia.ubicacion|default:'Vivienda del residente' }}</dd>
+                </dl>
+                {% if incidencia.evidencias.exists %}
+                    <hr><h4 class="h6">Evidencias</h4>
+                    <div class="d-flex flex-wrap gap-2">
+                    {% for evidencia in incidencia.evidencias.all %}
+                        <a class="btn btn-sm btn-outline-primary" href="{% url 'incidencia-evidencia-descargar' incidencia.id evidencia.id %}">
+                            <i class="fas fa-paperclip me-1"></i> Evidencia {{ forloop.counter }}
+                        </a>
+                    {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if not orden %}
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white py-3"><h3 class="h5 mb-0"><i class="fas fa-sliders text-primary me-2"></i>Ajustar evaluación</h3></div>
+            <div class="card-body">
+                <p class="small text-muted">Al guardar un ajuste se crea una versión nueva y todas las partes deben volver a aprobarla.</p>
+                <form method="post" action="{% url 'incidencia-revision-ajustar' incidencia.id %}" class="row g-3">
+                    {% csrf_token %}
+                    {% for field in form %}
+                    <div class="{% if field.name == 'comentario' %}col-12{% else %}col-md-6{% endif %}">
+                        <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                        {{ field }}
+                        {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                    </div>
+                    {% endfor %}
+                    <div class="col-12"><button class="btn btn-outline-primary"><i class="fas fa-save me-1"></i> Guardar nueva versión</button></div>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card detail-card shadow-sm mb-4">
+            <div class="card-header bg-white py-3"><h3 class="h5 mb-0"><i class="fas fa-users-check text-primary me-2"></i>Revisión de las partes</h3></div>
+            <div class="card-body">
+                {% for row in approval_rows %}
+                    {% if row.requerido %}
+                    <div class="approval-line">
+                        {% if row.aprobacion.decision == 'APROBADA' %}
+                            <span class="approval-icon bg-success"><i class="fas fa-check"></i></span>
+                        {% elif row.aprobacion.decision == 'REVISION_SOLICITADA' %}
+                            <span class="approval-icon bg-danger"><i class="fas fa-rotate"></i></span>
+                        {% else %}
+                            <span class="approval-icon bg-secondary"><i class="fas fa-clock"></i></span>
+                        {% endif %}
+                        <strong>{{ row.nombre }}</strong>
+                        <div class="small {% if row.aprobacion.decision == 'APROBADA' %}text-success{% elif row.aprobacion %}text-danger{% else %}text-muted{% endif %}">
+                            {% if row.aprobacion %}{{ row.aprobacion.get_decision_display }}{% else %}Pendiente de aprobación{% endif %}
+                        </div>
+                        {% if row.aprobacion.comentario %}<div class="small mt-1">{{ row.aprobacion.comentario }}</div>{% endif %}
+                    </div>
+                    {% endif %}
+                {% endfor %}
+
+                {% if orden %}
+                    <div class="alert alert-success mb-0">
+                        <i class="fas fa-circle-check me-2"></i><strong>{{ orden.codigo }}</strong><br>
+                        <span class="small">Orden aprobada y lista para seguimiento.</span>
+                    </div>
+                {% else %}
+                    <form method="post" action="{% url 'incidencia-revision-aprobar' incidencia.id %}" class="mb-2">
+                        {% csrf_token %}
+                        <button class="btn btn-primary w-100"><i class="fas fa-check me-1"></i> Aprobar evaluación</button>
+                    </form>
+                    <button class="btn btn-outline-secondary w-100" data-bs-toggle="collapse" data-bs-target="#requestChanges">
+                        Solicitar cambios
+                    </button>
+                    <div class="collapse mt-3" id="requestChanges">
+                        <form method="post" action="{% url 'incidencia-revision-solicitar' incidencia.id %}">
+                            {% csrf_token %}
+                            {{ solicitar_form.comentario.label_tag }}
+                            {{ solicitar_form.comentario }}
+                            <button class="btn btn-warning w-100 mt-2">Enviar solicitud</button>
+                        </form>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-header bg-white py-3"><h3 class="h6 mb-0"><i class="fas fa-clock-rotate-left me-2"></i>Historial</h3></div>
+            <div class="list-group list-group-flush">
+                {% for evento in incidencia.eventos.all reversed %}
+                    <div class="list-group-item">
+                        <div class="fw-semibold">{{ evento.get_tipo_evento_display }}</div>
+                        {% if evento.comentario %}<div class="small">{{ evento.comentario }}</div>{% endif %}
+                        <small class="text-muted">{{ evento.fecha|date:'d/m/Y H:i' }}</small>
+                    </div>
+                {% empty %}<div class="list-group-item text-muted">Sin eventos registrados.</div>{% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -7,12 +7,16 @@ from viviendas.models import Vivienda, Residente
 
 class Visita(models.Model):
     RESERVADA = 'RESERVADA'
+    PENDIENTE_APROBACION = 'PENDIENTE_APROBACION'
     CONFIRMADA = 'CONFIRMADA'
+    RECHAZADA = 'RECHAZADA'
     EXPIRADA = 'EXPIRADA'
     CANCELADA = 'CANCELADA'
     ESTADOS = [
         (RESERVADA, 'Reservada, esperando llegada'),
+        (PENDIENTE_APROBACION, 'Llegada reportada, esperando aprobación'),
         (CONFIRMADA, 'Ingreso confirmado'),
+        (RECHAZADA, 'Ingreso rechazado por el residente'),
         (EXPIRADA, 'Expirada sin confirmar'),
         (CANCELADA, 'Cancelada'),
     ]
@@ -36,12 +40,31 @@ class Visita(models.Model):
     )
     hora_inicio = models.TimeField(null=True, blank=True, help_text='Inicio de la ventana de validez del QR.')
     hora_fin = models.TimeField(null=True, blank=True, help_text='Fin de la ventana de validez del QR.')
-    estado = models.CharField(max_length=12, choices=ESTADOS, default=CONFIRMADA)
+    estado = models.CharField(max_length=24, choices=ESTADOS, default=CONFIRMADA)
+    foto_visitante = models.ImageField(
+        upload_to='visitas/llegadas/',
+        null=True,
+        blank=True,
+    )
+    llegada_reportada_en = models.DateTimeField(null=True, blank=True)
+    decision_residente_en = models.DateTimeField(null=True, blank=True)
+    notificacion_estado = models.CharField(
+        max_length=20,
+        default='NO_REGISTRADA',
+        help_text='REGISTRADA_LOCAL indica que la app puede obtenerla por polling.',
+    )
 
     # Anti-replay QR
     qr_nonce = models.CharField(max_length=32, blank=True, default='', db_index=True)
     qr_usado = models.BooleanField(default=False)
     qr_usado_en = models.DateTimeField(null=True, blank=True)
+    idempotency_key = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text='Clave de idempotencia para creación vía API o agente.',
+    )
 
     class Meta:
         ordering = ['-id']
@@ -168,6 +191,15 @@ class AperturaPuerta(models.Model):
     fecha_hora = models.DateTimeField(auto_now_add=True)
     exito = models.BooleanField(default=True)
     detalle = models.CharField(max_length=200, blank=True, default='')
+    hardware_status = models.CharField(max_length=30, blank=True, default='')
+    error_code = models.CharField(max_length=50, blank=True, default='')
+    idempotency_key = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text='Evita repetir una orden física ante reintentos.',
+    )
 
     class Meta:
         ordering = ['-fecha_hora']

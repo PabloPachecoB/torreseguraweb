@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+
+{% block title %}Incidencias | TorreSegura{% endblock %}
+{% block header %}Revisión de incidencias{% endblock %}
+
+{% block extra_css %}
+<style>
+    .metric-card { border: 0; border-left: 4px solid #21409a; }
+    .incident-title { color: #142b6f; font-weight: 700; }
+    .status-dot { width: .65rem; height: .65rem; border-radius: 50%; display: inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h2 class="h4 mb-1">Bandeja de mantenimiento</h2>
+        <p class="text-muted mb-0">Evalúa, ajusta y aprueba los reportes que están bajo tu responsabilidad.</p>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card metric-card shadow-sm h-100"><div class="card-body">
+            <div class="text-muted small">Pendientes de revisión</div>
+            <div class="fs-3 fw-bold text-primary">{{ totales.pendientes }}</div>
+        </div></div>
+    </div>
+    <div class="col-md-4">
+        <div class="card metric-card shadow-sm h-100"><div class="card-body">
+            <div class="text-muted small">Incidencias activas</div>
+            <div class="fs-3 fw-bold">{{ totales.activas }}</div>
+        </div></div>
+    </div>
+    <div class="col-md-4">
+        <div class="card metric-card shadow-sm h-100"><div class="card-body">
+            <div class="text-muted small">Órdenes aprobadas</div>
+            <div class="fs-3 fw-bold text-success">{{ totales.aprobadas }}</div>
+        </div></div>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-6">
+                <label for="q" class="form-label">Buscar</label>
+                <input id="q" name="q" value="{{ query }}" class="form-control"
+                       placeholder="Título, descripción, residente o vivienda">
+            </div>
+            <div class="col-md-3">
+                <label for="estado" class="form-label">Estado</label>
+                <select id="estado" name="estado" class="form-select">
+                    <option value="">Todos</option>
+                    {% for value, label in estados %}
+                        <option value="{{ value }}" {% if estado_seleccionado == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3 d-flex gap-2">
+                <button class="btn btn-primary flex-grow-1"><i class="fas fa-search me-1"></i> Filtrar</button>
+                <a href="{% url 'incidencia-revision-list' %}" class="btn btn-outline-secondary" title="Limpiar filtros">
+                    <i class="fas fa-rotate-left"></i>
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-white py-3">
+        <h3 class="h6 mb-0"><i class="fas fa-clipboard-list text-primary me-2"></i>Reportes</h3>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Reporte</th>
+                    <th>Ubicación</th>
+                    <th>Prioridad</th>
+                    <th>Técnico</th>
+                    <th>Estado</th>
+                    <th>Fecha</th>
+                    <th class="text-end">Acción</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for incidencia in incidencias %}
+                <tr>
+                    <td>
+                        <div class="incident-title">#{{ incidencia.id }} · {{ incidencia.titulo }}</div>
+                        <small class="text-muted">{{ incidencia.get_categoria_display }}</small>
+                    </td>
+                    <td>
+                        {{ incidencia.residente.vivienda.edificio.nombre }}
+                        <div class="small text-muted">Vivienda {{ incidencia.residente.vivienda.numero }}</div>
+                    </td>
+                    <td>
+                        {% if incidencia.urgencia == 'CRITICA' or incidencia.urgencia == 'ALTA' %}
+                            <span class="badge bg-danger">{{ incidencia.get_urgencia_display }}</span>
+                        {% elif incidencia.urgencia == 'MEDIA' %}
+                            <span class="badge bg-warning text-dark">Media</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Baja</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if incidencia.empleado_asignado %}
+                            {{ incidencia.empleado_asignado.nombre_completo|default:incidencia.empleado_asignado.usuario.username }}
+                        {% else %}
+                            <span class="text-muted">Sin asignar</span>
+                        {% endif %}
+                    </td>
+                    <td><span class="badge {% if incidencia.estado == 'APROBADA' %}bg-success{% elif incidencia.estado == 'EN_REVISION' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ incidencia.get_estado_display }}</span></td>
+                    <td>{{ incidencia.fecha_creacion|date:'d/m/Y H:i' }}</td>
+                    <td class="text-end">
+                        <a class="btn btn-sm btn-primary" href="{% url 'incidencia-revision-detail' incidencia.id %}">
+                            Revisar <i class="fas fa-chevron-right ms-1"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" class="text-center py-5 text-muted">
+                    <i class="fas fa-circle-check fs-2 d-block mb-2 text-success"></i>
+                    No hay incidencias para mostrar.
+                </td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

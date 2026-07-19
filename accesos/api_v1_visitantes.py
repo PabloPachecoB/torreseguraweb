@@ -26,7 +26,13 @@ class VisitanteViewSet(viewsets.ModelViewSet):
     serializer_class = VisitanteSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = None  # La app movil no maneja paginacion
-    http_method_names = ["get", "delete", "patch", "head", "options"]
+    http_method_names = ["get", "post", "delete", "patch", "head", "options"]
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"mensaje": "Use /api/v1/accesos/visitas/crear/ para crear visitas."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def _rol(self) -> str | None:
         return getattr(getattr(self.request.user, "rol", None), "nombre", None)
@@ -164,6 +170,43 @@ class VisitanteViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(visita)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="report-arrival")
+    def report_arrival(self, request, pk=None):
+        from .services import report_visit_arrival
+
+        result = report_visit_arrival(
+            request.user,
+            int(pk),
+            photo=request.FILES.get('photo'),
+        )
+        return Response(result, status=self._service_status(result))
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        from .services import decide_visit_arrival
+
+        result = decide_visit_arrival(request.user, int(pk), approved=True)
+        return Response(result, status=self._service_status(result))
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        from .services import decide_visit_arrival
+
+        result = decide_visit_arrival(request.user, int(pk), approved=False)
+        return Response(result, status=self._service_status(result))
+
+    @staticmethod
+    def _service_status(result):
+        if result.get('status') == 'success':
+            return status.HTTP_200_OK
+        if result.get('status') == 'unauthorized':
+            return status.HTTP_403_FORBIDDEN
+        if result.get('status') == 'not_found':
+            return status.HTTP_404_NOT_FOUND
+        if result.get('status') == 'conflict':
+            return status.HTTP_409_CONFLICT
+        return status.HTTP_400_BAD_REQUEST
 
     def handle_exception(self, exc):
         """Normaliza errores a {mensaje: ...} (y opcionalmente errores: ...)."""

@@ -1,6 +1,6 @@
-from django.db import transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -30,7 +30,23 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
     def confirmar(self, request, pk=None):
         accion = self.get_object()
 
-        # Las acciones conversacionales de reservas e incidencias se reanudan
+        # Una cerradura siempre exige reautenticación, también cuando la acción
+        # está vinculada a un thread de LangGraph. La contraseña nunca entra al
+        # estado conversacional ni al checkpoint.
+        if accion.tipo_accion.startswith('CERRADURA_'):
+            password = request.data.get('password', '')
+            if not password:
+                return Response(
+                    {'error': 'Confirmación reforzada: debes reingresar tu contraseña.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not request.user.check_password(password):
+                return Response(
+                    {'error': 'Contraseña incorrecta. La apertura no se ejecutó.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        # Las acciones conversacionales se reanudan
         # desde el interrupt de LangGraph.
         if accion.thread_id:
             try:
@@ -54,68 +70,41 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
             payload['conversation'] = conversation
             return Response(payload)
 
-        # HU-04.2 (LOCK-04): las acciones de cerradura exigen confirmación
-        # reforzada — segundo factor = re-autenticación con la contraseña.
-        # Se valida ANTES de tomar el lock para no bloquear filas en balde.
-        accion_preview = accion
-        if accion_preview.tipo_accion.startswith('CERRADURA_'):
-            password = request.data.get('password', '')
-            if not password:
-                return Response(
-                    {'error': 'Confirmación reforzada: debes reingresar tu contraseña.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if not request.user.check_password(password):
-                return Response(
-                    {'error': 'Contraseña incorrecta. La apertura no se ejecutó.'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-
         # La transición condicional de AgentAction confirma una sola petición;
         # funciona de forma atómica también sobre SQLite.
-        with transaction.atomic():
-            accion = AgentAction.objects.filter(usuario=request.user).get(
-                pk=accion_preview.pk
+        try:
+            accion.confirmar(request.user)
+        except PermissionError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
+
+        if accion.tipo_accion == 'CERRADURA_ABRIR':
+            from .tools import DoorTools
+
+            tools = DoorTools()
+            result = tools.open(accion.pk, request.user.pk)
+            if result.get('opening_id'):
+                tools.verify(accion.pk, request.user.pk)
+            accion.refresh_from_db()
+            return Response(
+                {
+                    'abierta': bool(result.get('success')),
+                    'mensaje': result.get('message'),
+                    'hardware_status': result.get('hardware_status'),
+                    'error_code': result.get('error_code'),
+                    'accion': self.get_serializer(accion).data,
+                },
+                status=(
+                    status.HTTP_200_OK
+                    if result.get('success')
+                    else status.HTTP_502_BAD_GATEWAY
+                    if result.get('opening_id')
+                    else status.HTTP_403_FORBIDDEN
+                ),
             )
-            try:
-                accion.confirmar(request.user)
-            except PermissionError as exc:
-                return Response({'error': str(exc)}, status=status.HTTP_403_FORBIDDEN)
-            except ValueError as exc:
-                return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
 
-            # Ejecutar la apertura física tras la confirmación (HU-04.2 → 04.3).
-            if accion.tipo_accion == 'CERRADURA_ABRIR':
-                from accesos.api_puertas import ejecutar_apertura, _puertas_permitidas
-
-                try:
-                    puerta = _puertas_permitidas(request.user).get(pk=accion.payload.get('puerta_id'))
-                except Exception:
-                    accion.resultado = {'abierta': False, 'detalle': 'Puerta no encontrada o sin permiso.'}
-                    accion.save(update_fields=['resultado'])
-                    return Response(
-                        {'error': 'Puerta no encontrada o sin permiso.', 'accion': self.get_serializer(accion).data},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
-
-                exito, detalle = ejecutar_apertura(puerta, request.user)
-                accion.estado_previo = accion.estado
-                accion.estado = AgentAction.EJECUTADA
-                accion.resultado = {'abierta': exito, 'detalle': detalle}
-                accion.save(update_fields=['estado', 'estado_previo', 'resultado'])
-
-                # HU-04.3: nunca presentar un fallo como éxito.
-                return Response(
-                    {
-                        'abierta': exito,
-                        'mensaje': f'{puerta.nombre} abierta correctamente.' if exito
-                                   else 'La puerta no respondió. Intenta de nuevo.',
-                        'accion': self.get_serializer(accion).data,
-                    },
-                    status=status.HTTP_200_OK if exito else status.HTTP_502_BAD_GATEWAY,
-                )
-
-            return Response(self.get_serializer(accion).data)
+        return Response(self.get_serializer(accion).data)
 
     @action(detail=True, methods=['post'])
     def rechazar(self, request, pk=None):
@@ -155,17 +144,56 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
         payload = adapter.health_check()
         return Response(payload)
 
-    @action(detail=False, methods=['post'])
+    @action(
+        detail=False,
+        methods=['post'],
+        parser_classes=[JSONParser, MultiPartParser, FormParser],
+    )
     def chat(self, request):
         serializer = AgentChatRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        message = serializer.validated_data.get('message', '')
+        transcription = None
+        audio = serializer.validated_data.get('audio')
+        if audio:
+            audio_format = audio.name.rsplit('.', 1)[-1].lower()
+            images = [
+                {
+                    'data': image.read(),
+                    'content_type': image.content_type,
+                }
+                for image in serializer.validated_data.get('images', [])
+            ]
+            transcription_result = get_llm_adapter().transcribe_audio(
+                audio.read(), audio_format, images=images,
+            )
+            if not transcription_result.get('healthy'):
+                return Response(
+                    {
+                        'error_code': transcription_result.get(
+                            'error_code', 'voice_transcription_unavailable',
+                        ),
+                        'detail': (
+                            'No pude transcribir el mensaje de voz. Verifica la '
+                            'configuración de Qwen Cloud e inténtalo nuevamente.'
+                        ),
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            transcription = transcription_result['transcription']
+            message = transcription
         service = get_conversation_service()
         try:
-            payload = service.chat(
-                user=request.user,
-                message=serializer.validated_data['message'],
-                thread_id=serializer.validated_data.get('thread_id'),
-            )
+            chat_kwargs = {
+                'user': request.user,
+                'message': message,
+                'thread_id': serializer.validated_data.get('thread_id'),
+            }
+            if serializer.validated_data.get('interaction'):
+                chat_kwargs['interaction'] = serializer.validated_data[
+                    'interaction'
+                ]
+            payload = service.chat(**chat_kwargs)
         except ValueError as exc:
             return Response(
                 {'error_code': 'invalid_thread_id', 'detail': str(exc)},
@@ -179,6 +207,8 @@ class AgentActionViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        if transcription:
+            payload['transcription'] = transcription
         response_status = (
             status.HTTP_200_OK
             if payload['status'] in {'ok', 'awaiting_confirmation'}

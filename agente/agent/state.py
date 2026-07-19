@@ -14,8 +14,10 @@ class AgentState(TypedDict, total=False):
     residence_id: Optional[int]
     apartment_id: Optional[int]
     authenticated_context: Dict[str, Any]
+    interaction: Optional[Dict[str, Any]]
     intent: str
     collected_fields: Dict[str, Any]
+    conversation_context: Dict[str, Dict[str, Any]]
     missing_fields: List[str]
     proposed_action: Optional[Dict[str, Any]]
     pending_action_id: Optional[int]
@@ -26,3 +28,5 @@ class AgentState(TypedDict, total=False):
     llm_invoked: bool
     guardrail_triggered: bool
     trace_metadata: Dict[str, Any]
+    presentation: Optional[Dict[str, Any]]
+    availability_follow_up: bool

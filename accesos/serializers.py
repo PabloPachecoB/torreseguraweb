@@ -15,6 +15,16 @@ class VisitanteSerializer(serializers.ModelSerializer):
     departmentNumber = serializers.SerializerMethodField()
     whoAuthorizes = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
+    visitDate = serializers.DateField(source="fecha_visita", read_only=True)
+    startTime = serializers.TimeField(source="hora_inicio", read_only=True)
+    endTime = serializers.TimeField(source="hora_fin", read_only=True)
+    peopleCount = serializers.IntegerField(source="cantidad_personas", read_only=True)
+    reservationStatus = serializers.CharField(source="estado", read_only=True)
+    qrUsed = serializers.BooleanField(source="qr_usado", read_only=True)
+    photoUrl = serializers.ImageField(source="foto_visitante", read_only=True)
+    arrivalReportedAt = serializers.DateTimeField(source="llegada_reportada_en", read_only=True)
+    residentDecisionAt = serializers.DateTimeField(source="decision_residente_en", read_only=True)
+    notificationStatus = serializers.CharField(source="notificacion_estado", read_only=True)
 
     class Meta:
         model = Visita
@@ -28,6 +38,16 @@ class VisitanteSerializer(serializers.ModelSerializer):
             "departmentNumber",
             "whoAuthorizes",
             "status",
+            "visitDate",
+            "startTime",
+            "endTime",
+            "peopleCount",
+            "reservationStatus",
+            "qrUsed",
+            "photoUrl",
+            "arrivalReportedAt",
+            "residentDecisionAt",
+            "notificationStatus",
         ]
 
     def get_departmentNumber(self, obj: Visita):

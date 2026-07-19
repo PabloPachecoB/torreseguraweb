@@ -1,6 +1,8 @@
 """Adaptador Qwen sobre la API compatible con OpenAI."""
 
+import base64
 import json
+import os
 from typing import Any, Dict, List, Mapping, Optional
 
 import requests
@@ -76,9 +78,13 @@ class QwenAdapter:
         # almacenar contenido de razonamiento y reducir latencia local.
         if self.provider == "qwen_local":
             request_payload["reasoning_effort"] = "none"
+        elif self.provider == "qwen_cloud":
+            request_payload["enable_thinking"] = False
+
         if tools:
             request_payload["tools"] = tools
             request_payload["tool_choice"] = "auto"
+
         if response_format:
             request_payload["response_format"] = response_format
 
@@ -135,6 +141,134 @@ class QwenAdapter:
     def generate_json(self, prompt: str) -> Dict[str, Any]:
         """Atajo estructurado compatible con el Incremento 1."""
         return self.chat_json([{"role": "user", "content": prompt}])
+
+    def transcribe_audio(
+        self,
+        audio: bytes,
+        audio_format: str,
+        images: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Transcribe un mensaje de voz con Qwen3.5-Omni Plus.
+
+        La voz se procesa en Qwen Cloud aunque el resto del agente use Ollama.
+        El audio se envía como Data URL y no se persiste ni entra a las trazas.
+        """
+        omni_model = os.getenv("QWEN_OMNI_MODEL", "qwen3.5-omni-plus").strip()
+        omni_base_url = os.getenv(
+            "QWEN_OMNI_BASE_URL",
+            self.settings.base_url if self.provider == "qwen_cloud" else "",
+        ).strip().rstrip("/")
+        omni_api_key = os.getenv(
+            "QWEN_OMNI_API_KEY",
+            self.settings.api_key if self.provider == "qwen_cloud" else "",
+        ).strip()
+        if not omni_base_url or not omni_api_key:
+            return self._error("voice_qwen_not_configured", transcription="")
+
+        encoded = base64.b64encode(audio).decode("ascii")
+        image_content = []
+        for image in images or []:
+            image_encoded = base64.b64encode(image["data"]).decode("ascii")
+            image_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": (
+                        f"data:{image['content_type']};base64,{image_encoded}"
+                    ),
+                },
+            })
+        instruction = (
+            "Transcribe literalmente este mensaje de voz."
+            if not image_content
+            else (
+                "Convierte este audio y las imágenes adjuntas en una sola "
+                "solicitud clara del residente. Conserva lo dicho y añade sólo "
+                "detalles directamente visibles que ayuden a entender el reporte."
+            )
+        )
+        request_payload = {
+            "model": omni_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Transcribe mensajes de voz en español para un asistente "
+                        "residencial. Conserva nombres, fechas, horas, números y "
+                        "lugares. Si hay imágenes, integra únicamente detalles "
+                        "objetivos y visibles que completen la solicitud. Devuelve "
+                        "sólo el mensaje resultante, sin explicaciones adicionales."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        *image_content,
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": f"data:audio/{audio_format};base64,{encoded}",
+                                "format": audio_format,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": instruction,
+                        },
+                    ],
+                },
+            ],
+            "modalities": ["text"],
+            "temperature": 0,
+            "max_tokens": min(self.settings.max_tokens, 1000),
+            "enable_thinking": False,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        try:
+            response = requests.post(
+                f"{omni_base_url}/chat/completions",
+                json=request_payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {omni_api_key}",
+                },
+                timeout=max(self.settings.timeout_seconds, 60),
+                stream=True,
+            )
+            response.raise_for_status()
+            fragments = []
+            for raw_line in response.iter_lines(decode_unicode=True):
+                if not raw_line:
+                    continue
+                line = raw_line.decode('utf-8') if isinstance(raw_line, bytes) else raw_line
+                if not line.startswith("data:"):
+                    continue
+                serialized = line[5:].strip()
+                if serialized == "[DONE]":
+                    break
+                chunk = json.loads(serialized)
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                content = choices[0].get("delta", {}).get("content")
+                if isinstance(content, str):
+                    fragments.append(content)
+            transcription = "".join(fragments).strip()
+            if not transcription:
+                raise ValueError("Transcripción vacía")
+            return {
+                "healthy": True,
+                "provider": "qwen_cloud",
+                "model": omni_model,
+                "transcription": transcription,
+                "status": "ok",
+            }
+        except requests.Timeout:
+            return self._error("voice_transcription_timeout", transcription="")
+        except requests.RequestException:
+            return self._error("voice_transcription_unavailable", transcription="")
+        except (KeyError, IndexError, TypeError, ValueError):
+            return self._error("invalid_voice_transcription", transcription="")
 
     def _error(self, error_code: str, **extra: Any) -> Dict[str, Any]:
         result = {

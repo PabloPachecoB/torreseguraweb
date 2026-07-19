@@ -145,21 +145,24 @@ Endpoints JWT para la app React Native:
 
 ### Agente conversacional
 
-El MVP usa Qwen, LangGraph y tools controladas para reservas e incidencias. La
+El agente usa Qwen, LangGraph y tools controladas para reservas, incidencias,
+apertura de cerraduras y autorizaciones de visita. La
 guía de configuración, API móvil y demo está en `docs/AGENT_MVP.md`. Componentes:
 
 - `agente.AgentAction`: acción auditable, confirmada e idempotente.
 - `agente/agent/`: estado, grafo, checkpoints SQLite y servicio de conversación.
 - `agente/agent/nlu.py`: clasificación y extracción Qwen validadas con Pydantic.
-- `agente/tools/`: tools tipadas para `Reserva` e `Incidencia`.
+- `agente/tools/`: tools tipadas para los cuatro procesos.
 - Endpoint de disponibilidad real de areas comunes (`GET /api/v1/areas-comunes/<id>/disponibilidad/`),
   que calcula horarios libres y propone fechas alternativas sin inventar datos.
-- Control de puertas (`accesos.Puerta`/`AperturaPuerta`) queda como P1 con hardware.
+- Las cerraduras solo admiten apertura en demo controlada y exigen contraseña.
+- Las visitas generan una autorización futura y un QR idempotente para la vivienda autenticada.
+- La llegada admite foto opcional, notificación local consultable y decisión del residente.
 
 Documentacion detallada de la API para quienes construyen el motor conversacional:
 `inst/api_documentation_huascar.md`.
 
-El estado y el orden de implementación de cerraduras y visitas están en
+El estado y las restricciones de cerraduras y visitas están en
 `docs/AGENT_PROCESOS_PENDIENTES.md`.
 
 ### Roles y permisos

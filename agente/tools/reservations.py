@@ -9,8 +9,8 @@ from django.utils import timezone
 from pydantic import ValidationError as PydanticValidationError
 
 from agente.models import AgentAction
-from areas_comunes.api import _slots_disponibles
 from areas_comunes.models import AreaComun, Reserva
+from areas_comunes.services import available_slots
 
 from .schemas import ReservationRequest
 
@@ -110,6 +110,17 @@ class ReservationTools:
                 "status": "conflict",
                 "error_code": "slot_unavailable",
                 "message": "El horario solicitado ya no está disponible.",
+                "area": {
+                    "id": area.pk,
+                    "name": area.nombre,
+                    "capacity": area.capacidad_maxima,
+                },
+                "requested": {
+                    "date": request.date.isoformat(),
+                    "start_time": request.start_time.strftime("%H:%M"),
+                    "end_time": request.end_time.strftime("%H:%M"),
+                    "attendees": request.attendees,
+                },
                 "alternatives": self._alternatives(area, request),
             }
 
@@ -293,7 +304,7 @@ class ReservationTools:
         alternatives = []
         for day_offset in range(0, 8):
             candidate_date = request.date + timedelta(days=day_offset)
-            slots = _slots_disponibles(area, candidate_date, duration)
+            slots = available_slots(area, candidate_date, duration)
             if slots:
                 alternatives.append(
                     {"date": candidate_date.isoformat(), "slots": slots[:3]}
@@ -345,6 +356,11 @@ class ReservationTools:
 
     @staticmethod
     def _validation_message(exc: PydanticValidationError) -> str:
+        if any(error["type"] == "extra_forbidden" for error in exc.errors()):
+            return (
+                "La solicitud contiene datos que no corresponden a una reserva. "
+                "Intenta nuevamente."
+            )
         return "; ".join(error["msg"] for error in exc.errors())
 
     @staticmethod
