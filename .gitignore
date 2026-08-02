@@ -65,3 +65,5 @@ AGENTS.md
 .venv
 .codex
 .agents
+# Checkpoints del agente (SQLite + sus archivos WAL/SHM)
+agent_checkpoints.sqlite3*
