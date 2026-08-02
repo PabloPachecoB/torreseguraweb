@@ -3,6 +3,7 @@
 from datetime import timedelta
 import hashlib
 import json
+from uuid import uuid4
 from typing import Any, Dict, Iterable, List
 
 from django.utils import timezone
@@ -1261,7 +1262,16 @@ class AgentGraphNodes:
     @staticmethod
     def generate_door_missing_response(state: AgentState) -> Dict:
         doors = state.get("tool_result", {}).get("doors", [])
-        names = ", ".join(f'{door["name"]} (puerta {door["id"]})' for door in doors)
+        # Mostrar el rótulo humano de la puerta (name = "Puerta del edificio",
+        # "2-A"...), nunca el id interno de la BD, que no le dice nada al usuario.
+        # Para puertas de vivienda se añade el depto como pista de selección.
+        def _label(door):
+            apt = door.get("apartment")
+            if apt and apt not in door["name"]:
+                return f'{door["name"]} (depto {apt})'
+            return door["name"]
+
+        names = ", ".join(_label(door) for door in doors)
         content = "Indica qué puerta deseas abrir."
         if names:
             content += f" Puertas autorizadas: {names}."
@@ -1280,6 +1290,9 @@ class AgentGraphNodes:
             parameters=parameters,
             summary=summary,
             expires_minutes=5,
+            # Abrir una puerta es repetible: cada solicitud debe disparar el relé
+            # y registrar una apertura nueva, no reproducir la anterior.
+            idempotency_nonce=uuid4().hex,
         )
 
     def execute_door(self, state: AgentState) -> Dict:
@@ -1438,12 +1451,21 @@ class AgentGraphNodes:
         parameters: Dict,
         summary: str,
         expires_minutes: int = 10,
+        idempotency_nonce: str = None,
     ) -> Dict:
+        # Por defecto la clave de idempotencia depende solo de (usuario, thread,
+        # parámetros): así una reserva/incidencia/visita repetida NO se duplica.
+        # Para acciones repetibles por naturaleza (abrir una puerta), quien llama
+        # pasa un `idempotency_nonce` único para que cada solicitud sea una acción
+        # nueva que ejecuta de verdad (dispara el relé y genera registro nuevo),
+        # en vez de reproducir el resultado guardado sin abrir físicamente.
         canonical = json.dumps(parameters, sort_keys=True, separators=(",", ":"))
-        idempotency_key = hashlib.sha256(
-            f"{state['user_id']}:{state['thread_id']}:{action_type}:{canonical}".encode()
-        ).hexdigest()
-        action, _ = AgentAction.objects.get_or_create(
+        key_material = f"{state['user_id']}:{state['thread_id']}:{action_type}:{canonical}"
+        if idempotency_nonce:
+            key_material += f":{idempotency_nonce}"
+        idempotency_key = hashlib.sha256(key_material.encode()).hexdigest()
+        now = timezone.now()
+        action, created = AgentAction.objects.get_or_create(
             usuario_id=state["user_id"],
             idempotency_key=idempotency_key,
             defaults={
@@ -1452,9 +1474,45 @@ class AgentGraphNodes:
                 "payload": parameters,
                 "requires_confirmation": True,
                 "tool_name": tool_name,
-                "expira_en": timezone.now() + timedelta(minutes=expires_minutes),
+                "expira_en": now + timedelta(minutes=expires_minutes),
             },
         )
+        # La clave de idempotencia depende solo de (usuario, thread, parámetros),
+        # así que volver a pedir la misma acción en el mismo chat reencuentra la
+        # fila anterior. Si esa fila ya no es confirmable (venció o quedó en un
+        # estado terminal), hay que revivirla a una ventana PENDIENTE fresca; de
+        # lo contrario se devolvería una acción zombi que falla al confirmarse de
+        # inmediato aunque el mensaje diga "vence en N minutos".
+        if not created and (
+            action.estado != AgentAction.PENDIENTE
+            or (action.expira_en and action.expira_en < now)
+        ):
+            action.estado_previo = action.estado
+            action.estado = AgentAction.PENDIENTE
+            action.thread_id = state["thread_id"]
+            action.payload = parameters
+            action.expira_en = now + timedelta(minutes=expires_minutes)
+            action.fecha_confirmacion = None
+            action.confirmada_por = None
+            action.executed_at = None
+            action.resultado = None
+            action.error_code = ""
+            action.verification_status = AgentAction.VERIFICACION_NO_INICIADA
+            action.save(
+                update_fields=[
+                    "estado_previo",
+                    "estado",
+                    "thread_id",
+                    "payload",
+                    "expira_en",
+                    "fecha_confirmacion",
+                    "confirmada_por",
+                    "executed_at",
+                    "resultado",
+                    "error_code",
+                    "verification_status",
+                ]
+            )
         return {
             "proposed_action": {
                 "action_type": action_type,

@@ -5,6 +5,8 @@ from typing import Dict, Optional
 from uuid import UUID, uuid4
 
 from django.core.exceptions import ObjectDoesNotExist
+from django.db.models import Q
+from django.utils import timezone
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 from langsmith import tracing_context
@@ -69,11 +71,27 @@ class AgentConversationService:
     ) -> Dict:
         public_thread_id = self._normalize_thread_id(thread_id)
         internal_thread_id = f"user:{user.pk}:{public_thread_id}"
-        pending_action = AgentAction.objects.filter(
+        now = timezone.now()
+        # Expira perezosamente las acciones ya vencidas de este thread: siguen
+        # marcadas PENDIENTE hasta que alguien las confirme/rechace, así que sin
+        # esto una acción zombi (vencida pero PENDIENTE) bloquearía el chat para
+        # siempre y a la vez fallaría al confirmarse — un candado mortal.
+        AgentAction.objects.filter(
             usuario_id=user.pk,
             thread_id=public_thread_id,
             estado=AgentAction.PENDIENTE,
-        ).order_by("-fecha_creacion").first()
+            expira_en__lt=now,
+        ).update(estado_previo=AgentAction.PENDIENTE, estado=AgentAction.EXPIRADA)
+        pending_action = (
+            AgentAction.objects.filter(
+                usuario_id=user.pk,
+                thread_id=public_thread_id,
+                estado=AgentAction.PENDIENTE,
+            )
+            .filter(Q(expira_en__isnull=True) | Q(expira_en__gte=now))
+            .order_by("-fecha_creacion")
+            .first()
+        )
         if pending_action is not None:
             metadata = self._action_metadata(pending_action.tipo_accion)
             noun = metadata['noun']
