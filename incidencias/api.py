@@ -8,8 +8,20 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import EvidenciaIncidencia, Incidencia
-from .serializers import IncidenciaListSerializer, IncidenciaSerializer
+from .models import EvidenciaIncidencia, Incidencia, NotificacionIncidencia
+from .serializers import (
+    DecisionRevisionSerializer,
+    IncidenciaListSerializer,
+    IncidenciaSerializer,
+    NotificacionIncidenciaSerializer,
+    RevisionUpdateSerializer,
+)
+from .services import (
+    crear_evaluacion_inicial,
+    decidir_revision,
+    revisar_incidencia,
+    usuarios_administradores,
+)
 
 EXTENSIONES_FOTO = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'}
 EXTENSIONES_VIDEO = {'.mp4', '.mov', '.avi', '.webm', '.mkv'}
@@ -40,8 +52,11 @@ def _incidencia_visible_o_none(request, incidencia_id):
     `areas_comunes`, para no confirmar la existencia de incidencias ajenas.
     """
     try:
-        incidencia = Incidencia.objects.select_related('residente__usuario').prefetch_related(
-            'evidencias', 'eventos',
+        incidencia = Incidencia.objects.select_related(
+            'residente__usuario', 'residente__vivienda__edificio',
+            'empleado_asignado__usuario',
+        ).prefetch_related(
+            'evidencias', 'eventos', 'revisiones__aprobaciones',
         ).get(pk=incidencia_id)
     except Incidencia.DoesNotExist:
         return None
@@ -145,6 +160,7 @@ def crear_incidencia(request):
                     tipo=_inferir_tipo_evidencia(archivo.name),
                     subido_por=request.user,
                 )
+            crear_evaluacion_inicial(incidencia, request.user)
     except IntegrityError:
         existing = Incidencia.objects.filter(
             idempotency_key=idempotency_key,
@@ -282,3 +298,82 @@ def cambiar_estado_incidencia(request, incidencia_id):
     )
     serializer = IncidenciaSerializer(incidencia, context={'request': request})
     return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def pendientes_revision(request):
+    queryset = Incidencia.objects.filter(estado=Incidencia.EN_REVISION).select_related(
+        'residente__vivienda__edificio', 'empleado_asignado__usuario',
+    ).prefetch_related('revisiones__aprobaciones')
+    if hasattr(request.user, 'residente'):
+        queryset = queryset.filter(residente=request.user.residente)
+    elif hasattr(request.user, 'empleado'):
+        queryset = queryset.filter(empleado_asignado=request.user.empleado)
+    elif not request.user.is_superuser and _rol(request.user) not in {'Administrador', 'Gerente'}:
+        return Response([], status=status.HTTP_200_OK)
+    elif _rol(request.user) == 'Gerente':
+        edificios = request.user.gerente.condominio.edificios.all() if request.user.gerente.condominio_id else [request.user.gerente.edificio]
+        queryset = queryset.filter(residente__vivienda__edificio__in=edificios)
+    return Response(IncidenciaListSerializer(queryset[:100], many=True).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def ajustar_revision(request, incidencia_id):
+    incidencia = _incidencia_visible_o_none(request, incidencia_id)
+    if incidencia is None:
+        return Response({'mensaje': 'Incidencia no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    serializer = RevisionUpdateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        revisar_incidencia(incidencia, request.user, dict(serializer.validated_data))
+    except PermissionError as exc:
+        return Response({'mensaje': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+    except ValueError as exc:
+        return Response({'mensaje': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    incidencia.refresh_from_db()
+    return Response(IncidenciaSerializer(incidencia, context={'request': request}).data)
+
+
+def _decidir(request, incidencia_id, aprobar):
+    incidencia = _incidencia_visible_o_none(request, incidencia_id)
+    if incidencia is None:
+        return Response({'mensaje': 'Incidencia no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    serializer = DecisionRevisionSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        _, order = decidir_revision(
+            incidencia,
+            request.user,
+            aprobar=aprobar,
+            comentario=serializer.validated_data.get('comentario', ''),
+        )
+    except PermissionError as exc:
+        return Response({'mensaje': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+    except ValueError as exc:
+        return Response({'mensaje': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    incidencia.refresh_from_db()
+    payload = IncidenciaSerializer(incidencia, context={'request': request}).data
+    return Response({'incidencia': payload, 'orden_generada': bool(order)})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def aprobar_revision(request, incidencia_id):
+    return _decidir(request, incidencia_id, aprobar=True)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def solicitar_revision(request, incidencia_id):
+    return _decidir(request, incidencia_id, aprobar=False)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def notificaciones_incidencia(request):
+    notifications = NotificacionIncidencia.objects.filter(
+        destinatario=request.user,
+    ).select_related('incidencia')[:100]
+    return Response(NotificacionIncidenciaSerializer(notifications, many=True).data)

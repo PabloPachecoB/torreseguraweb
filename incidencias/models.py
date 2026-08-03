@@ -78,6 +78,11 @@ class Incidencia(models.Model):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
+    empleado_asignado = models.ForeignKey(
+        'personal.Empleado', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='incidencias_asignadas',
+    )
+
     class Meta:
         verbose_name = 'Incidencia'
         verbose_name_plural = 'Incidencias'
@@ -176,3 +181,134 @@ class EventoIncidencia(models.Model):
 
     def __str__(self):
         return f'{self.get_tipo_evento_display()} — {self.incidencia} ({self.fecha:%d/%m/%Y %H:%M})'
+
+
+class RevisionIncidencia(models.Model):
+    """Versión auditable de la evaluación que deben aprobar las partes."""
+
+    AGENTE = 'AGENTE'
+    ADMINISTRADOR = 'ADMINISTRADOR'
+    TECNICO = 'TECNICO'
+    ORIGENES = [
+        (AGENTE, 'Agente'),
+        (ADMINISTRADOR, 'Administrador'),
+        (TECNICO, 'Técnico'),
+    ]
+
+    incidencia = models.ForeignKey(
+        Incidencia, on_delete=models.CASCADE, related_name='revisiones',
+    )
+    version = models.PositiveIntegerField()
+    categoria = models.CharField(max_length=20, choices=Incidencia.CATEGORIAS)
+    prioridad = models.CharField(max_length=10, choices=Incidencia.URGENCIAS)
+    costo_estimado_min = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+    )
+    costo_estimado_max = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+    )
+    moneda = models.CharField(max_length=3, default='BOB')
+    tiempo_estimado_horas = models.PositiveIntegerField(null=True, blank=True)
+    comentario = models.TextField(blank=True, default='')
+    origen = models.CharField(max_length=15, choices=ORIGENES)
+    creada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name='revisiones_incidencia_creadas',
+    )
+    vigente = models.BooleanField(default=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['version']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['incidencia', 'version'],
+                name='incidencia_revision_version_unica',
+            ),
+        ]
+
+
+class AprobacionIncidencia(models.Model):
+    RESIDENTE = 'RESIDENTE'
+    ADMINISTRADOR = 'ADMINISTRADOR'
+    TECNICO = 'TECNICO'
+    ROLES = [
+        (RESIDENTE, 'Residente'),
+        (ADMINISTRADOR, 'Administrador'),
+        (TECNICO, 'Técnico'),
+    ]
+    APROBADA = 'APROBADA'
+    REVISION_SOLICITADA = 'REVISION_SOLICITADA'
+    DECISIONES = [
+        (APROBADA, 'Aprobada'),
+        (REVISION_SOLICITADA, 'Revisión solicitada'),
+    ]
+
+    revision = models.ForeignKey(
+        RevisionIncidencia, on_delete=models.CASCADE, related_name='aprobaciones',
+    )
+    rol = models.CharField(max_length=15, choices=ROLES)
+    decision = models.CharField(max_length=20, choices=DECISIONES)
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='aprobaciones_incidencia',
+    )
+    comentario = models.TextField(blank=True, default='')
+    fecha = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['revision', 'rol'],
+                name='incidencia_aprobacion_rol_unica',
+            ),
+        ]
+
+
+class OrdenTrabajo(models.Model):
+    APROBADA = 'APROBADA'
+    PROGRAMADA = 'PROGRAMADA'
+    EN_EJECUCION = 'EN_EJECUCION'
+    COMPLETADA = 'COMPLETADA'
+    ESTADOS = [
+        (APROBADA, 'Aprobada'),
+        (PROGRAMADA, 'Programada'),
+        (EN_EJECUCION, 'En ejecución'),
+        (COMPLETADA, 'Completada'),
+    ]
+
+    incidencia = models.OneToOneField(
+        Incidencia, on_delete=models.CASCADE, related_name='orden_trabajo',
+    )
+    revision_aprobada = models.OneToOneField(
+        RevisionIncidencia, on_delete=models.PROTECT,
+        related_name='orden_trabajo',
+    )
+    codigo = models.CharField(max_length=24, unique=True)
+    tecnico = models.ForeignKey(
+        'personal.Empleado', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='ordenes_trabajo',
+    )
+    estado = models.CharField(max_length=15, choices=ESTADOS, default=APROBADA)
+    programada_inicio = models.DateTimeField(null=True, blank=True)
+    programada_fin = models.DateTimeField(null=True, blank=True)
+    fecha_aprobacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+
+class NotificacionIncidencia(models.Model):
+    incidencia = models.ForeignKey(
+        Incidencia, on_delete=models.CASCADE, related_name='notificaciones',
+    )
+    destinatario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='notificaciones_incidencia',
+    )
+    tipo = models.CharField(max_length=40)
+    mensaje = models.CharField(max_length=500)
+    leida = models.BooleanField(default=False)
+    fecha = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-fecha']
+        indexes = [models.Index(fields=['destinatario', 'leida', '-fecha'])]

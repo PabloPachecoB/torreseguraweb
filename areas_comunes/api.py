@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
@@ -10,6 +10,7 @@ from rest_framework.response import Response
 
 from .models import AreaComun, Reserva
 from .serializers import AreaComunSerializer, ReservaSerializer
+from .services import available_slots
 
 DURACION_MINUTOS_DEFAULT = 60
 DIAS_BUSQUEDA_ALTERNATIVAS = 7
@@ -36,47 +37,8 @@ def _area_del_usuario_o_none(request, area_id):
 
 
 def _slots_disponibles(area, fecha, duracion_minutos):
-    """Calcula los huecos libres de `area` en `fecha`, en base al horario del
-    area y a las reservas (pendiente/confirmada) reales de ese dia — nunca
-    inventa horarios fuera del rango de atencion ni ignora reservas existentes.
-    """
-    inicio_jornada = datetime.combine(fecha, area.horario_inicio)
-    fin_jornada = datetime.combine(fecha, area.horario_fin)
-    duracion = timedelta(minutes=duracion_minutos)
-
-    ocupados = list(
-        Reserva.objects.filter(
-            area_comun=area,
-            fecha=fecha,
-            estado__in=["pendiente", "confirmada"],
-        )
-        .order_by("hora_inicio")
-        .values_list("hora_inicio", "hora_fin")
-    )
-
-    slots = []
-    cursor = inicio_jornada
-    for hora_inicio_ocupada, hora_fin_ocupada in ocupados:
-        ocupado_inicio = datetime.combine(fecha, hora_inicio_ocupada)
-        ocupado_fin = datetime.combine(fecha, hora_fin_ocupada)
-
-        hueco_fin = min(ocupado_inicio, fin_jornada)
-        slot_inicio = cursor
-        while slot_inicio + duracion <= hueco_fin:
-            slots.append((slot_inicio.time(), (slot_inicio + duracion).time()))
-            slot_inicio += duracion
-
-        cursor = max(cursor, ocupado_fin)
-
-    slot_inicio = cursor
-    while slot_inicio + duracion <= fin_jornada:
-        slots.append((slot_inicio.time(), (slot_inicio + duracion).time()))
-        slot_inicio += duracion
-
-    return [
-        {"hora_inicio": inicio.strftime("%H:%M"), "hora_fin": fin.strftime("%H:%M")}
-        for inicio, fin in slots
-    ]
+    """Alias compatible; la lógica compartida vive en servicios de dominio."""
+    return available_slots(area, fecha, duracion_minutos)
 
 
 def _edificio_del_usuario(user):

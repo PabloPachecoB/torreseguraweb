@@ -45,6 +45,7 @@ urlpatterns = [
     path('areas-comunes/', include('areas_comunes.urls')),
     path('financiero/', include('financiero.urls')),
     path('reportes/', include('reportes.urls')),
+    path('incidencias/', include('incidencias.urls')),
     
     # OAuth URLs
     path('accounts/', include('allauth.urls')),

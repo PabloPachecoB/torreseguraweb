@@ -6,7 +6,8 @@ from rest_framework.test import APIClient
 from .models import Visita, MovimientoResidente
 from usuarios.models import Rol
 from viviendas.models import Edificio, Vivienda, Residente
-from datetime import date, timedelta
+from datetime import date, time, timedelta
+from unittest.mock import patch
 
 class VisitaModelTest(TestCase):
     """
@@ -414,6 +415,8 @@ class ReservaVisitaApiTest(TestCase):
         )
 
         self.edificio = Edificio.objects.create(nombre='Torre Test', direccion='Calle 1', pisos=5)
+        from usuarios.models import Vigilante
+        Vigilante.objects.create(usuario=self.vigilante_user, edificio=self.edificio)
         self.vivienda = Vivienda.objects.create(
             edificio=self.edificio, numero='201', piso=2, metros_cuadrados=80,
         )
@@ -443,6 +446,94 @@ class ReservaVisitaApiTest(TestCase):
         visita = Visita.objects.get(pk=response.data['id'])
         self.assertIsNone(visita.fecha_hora_entrada)
         self.assertEqual(visita.cantidad_personas, 3)
+
+    def test_reserva_futura_permanece_visible_en_listado_movil(self):
+        response = self._reservar()
+        visita_id = response.data['id']
+
+        listado = self.client.get(reverse('visitantes-list'))
+
+        self.assertEqual(listado.status_code, 200)
+        self.assertIn(visita_id, [item['id'] for item in listado.data])
+        item = next(item for item in listado.data if item['id'] == visita_id)
+        self.assertEqual(item['visitDate'], self.manana.isoformat())
+        self.assertEqual(item['peopleCount'], 3)
+        self.assertEqual(item['reservationStatus'], Visita.RESERVADA)
+
+    def test_reserva_api_es_idempotente(self):
+        data = {
+            'nombre_visitante': 'Juan Perez',
+            'documento_visitante': '1234567',
+            'vivienda_destino_id': self.vivienda.id,
+            'cantidad_personas': 3,
+            'fecha_visita': self.manana.isoformat(),
+            'hora_inicio': '13:00',
+            'hora_fin': '15:00',
+        }
+        self.client.force_authenticate(self.usuario_residente)
+        first = self.client.post(
+            reverse('api_v1_crear_visita'),
+            data,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='visit-api-test',
+        )
+        second = self.client.post(
+            reverse('api_v1_crear_visita'),
+            data,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='visit-api-test',
+        )
+
+        self.assertEqual(first.data['id'], second.data['id'])
+        self.assertTrue(second.data['replayed'])
+        self.assertEqual(Visita.objects.count(), 1)
+
+    def test_llegada_notifica_localmente_y_residente_aprueba(self):
+        response = self._reservar()
+        visit_id = response.data['id']
+        self.client.force_authenticate(self.vigilante_user)
+
+        arrival = self.client.post(
+            reverse('visitantes-report-arrival', kwargs={'pk': visit_id}),
+            {},
+            format='json',
+        )
+        self.assertEqual(arrival.status_code, 200)
+        self.assertEqual(arrival.data['visit_status'], Visita.PENDIENTE_APROBACION)
+        self.assertEqual(arrival.data['notification_delivery'], 'local_polling')
+
+        self.client.force_authenticate(self.usuario_residente)
+        decision = self.client.post(
+            reverse('visitantes-approve', kwargs={'pk': visit_id}),
+            {},
+            format='json',
+        )
+        self.assertEqual(decision.status_code, 200)
+        self.assertEqual(decision.data['visit_status'], Visita.CONFIRMADA)
+        visit = Visita.objects.get(pk=visit_id)
+        self.assertIsNotNone(visit.fecha_hora_entrada)
+        self.assertIsNotNone(visit.decision_residente_en)
+
+    def test_residente_puede_rechazar_llegada(self):
+        response = self._reservar()
+        visit_id = response.data['id']
+        self.client.force_authenticate(self.vigilante_user)
+        self.client.post(
+            reverse('visitantes-report-arrival', kwargs={'pk': visit_id}),
+            {},
+            format='json',
+        )
+        self.client.force_authenticate(self.usuario_residente)
+
+        decision = self.client.post(
+            reverse('visitantes-reject', kwargs={'pk': visit_id}),
+            {},
+            format='json',
+        )
+
+        self.assertEqual(decision.status_code, 200)
+        self.assertEqual(decision.data['visit_status'], Visita.RECHAZADA)
+        self.assertIsNone(Visita.objects.get(pk=visit_id).fecha_hora_entrada)
 
     def test_sin_campos_de_reserva_mantiene_comportamiento_inmediato(self):
         response = self._reservar(fecha_visita=None, hora_inicio=None, hora_fin=None)
@@ -484,13 +575,20 @@ class ReservaVisitaApiTest(TestCase):
 
     def test_verificar_dentro_de_ventana_confirma_ingreso(self):
         ahora = timezone.localtime()
+        # La ventana se recorta al dia en curso. Sin esto, entre las 23:30 y las
+        # 00:30 el margen de +/-30 min cruzaba medianoche y hora_fin quedaba
+        # ANTES que hora_inicio, con lo que la visita nacia expirada y el test
+        # fallaba una hora al dia. Un horario que cruza medianoche ni siquiera es
+        # representable: create_visit_authorization rechaza hora_fin <= hora_inicio.
+        inicio = ahora - timedelta(minutes=30)
+        fin = ahora + timedelta(minutes=30)
         visita = Visita.objects.create(
             nombre_visitante='Juan Perez', documento_visitante='1234567',
             vivienda_destino=self.vivienda, residente_autoriza=self.residente,
             cantidad_personas=4, estado=Visita.RESERVADA,
             fecha_visita=ahora.date(),
-            hora_inicio=(ahora - timedelta(minutes=30)).time(),
-            hora_fin=(ahora + timedelta(minutes=30)).time(),
+            hora_inicio=time.min if inicio.date() < ahora.date() else inicio.time(),
+            hora_fin=time.max if fin.date() > ahora.date() else fin.time(),
         )
         response = self._verificar_qr(visita)
         self.assertEqual(response.status_code, 200)
@@ -501,28 +599,35 @@ class ReservaVisitaApiTest(TestCase):
         self.assertIsNotNone(visita.fecha_hora_entrada)
 
     def test_verificar_antes_de_hora_inicio_da_403(self):
+        # Anclado a manana con horas fijas: desplazar solo la hora hacia adelante
+        # se salia del dia cuando el test corria de noche, y entonces el 403 lo
+        # producia "ventana expirada" en vez de "ventana no iniciada" — verde por
+        # el motivo equivocado.
         ahora = timezone.localtime()
         visita = Visita.objects.create(
             nombre_visitante='Juan Perez', documento_visitante='1234567',
             vivienda_destino=self.vivienda, residente_autoriza=self.residente,
             estado=Visita.RESERVADA,
-            fecha_visita=ahora.date(),
-            hora_inicio=(ahora + timedelta(hours=1)).time(),
-            hora_fin=(ahora + timedelta(hours=2)).time(),
+            fecha_visita=ahora.date() + timedelta(days=1),
+            hora_inicio=time(8, 0),
+            hora_fin=time(10, 0),
         )
         response = self._verificar_qr(visita)
         self.assertEqual(response.status_code, 403)
         self.assertFalse(response.data['valido'])
 
     def test_verificar_despues_de_hora_fin_da_403_y_expira(self):
+        # Anclado a ayer con horas fijas, por el motivo simetrico al test de
+        # arriba: de madrugada, restar horas cruzaba al dia anterior y el 403
+        # venia de "ventana no iniciada" en vez de "ventana expirada".
         ahora = timezone.localtime()
         visita = Visita.objects.create(
             nombre_visitante='Juan Perez', documento_visitante='1234567',
             vivienda_destino=self.vivienda, residente_autoriza=self.residente,
             estado=Visita.RESERVADA,
-            fecha_visita=ahora.date(),
-            hora_inicio=(ahora - timedelta(hours=2)).time(),
-            hora_fin=(ahora - timedelta(hours=1)).time(),
+            fecha_visita=ahora.date() - timedelta(days=1),
+            hora_inicio=time(8, 0),
+            hora_fin=time(10, 0),
         )
         response = self._verificar_qr(visita)
         self.assertEqual(response.status_code, 403)
@@ -628,6 +733,23 @@ class AperturaConfirmacionReforzadaTest(TestCase):
         # el queryset del viewset solo expone acciones propias -> 404
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(AperturaPuerta.objects.count(), 0)
+
+    def test_servicio_timeout_es_verificable_e_idempotente(self):
+        import requests
+        from accesos.services import open_door
+
+        self.puerta.habilitada_para_demo = True
+        self.puerta.webhook_url = 'http://hardware.invalid/open'
+        self.puerta.save()
+        with patch('accesos.services.requests.post', side_effect=requests.Timeout):
+            first = open_door(self.user, self.puerta.pk, 'door-timeout-test')
+            replayed = open_door(self.user, self.puerta.pk, 'door-timeout-test')
+
+        self.assertFalse(first['success'])
+        self.assertEqual(first['hardware_status'], 'timeout')
+        self.assertEqual(first['error_code'], 'hardware_timeout')
+        self.assertTrue(replayed['replayed'])
+        self.assertEqual(AperturaPuerta.objects.count(), 1)
 
 
 class RegresionFixesReviewTest(TestCase):

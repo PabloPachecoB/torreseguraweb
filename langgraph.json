@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "torresegura_agent": "./agente/agent/dev_graph.py:graph"
+  },
+  "env": "./.env"
+}

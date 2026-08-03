@@ -8,63 +8,32 @@ Permisos por rol:
 Si la puerta tiene `webhook_url`, se envía la orden al hardware (ESP32/relé);
 si no, la apertura queda en modo software (se registra y responde OK).
 """
-import requests
-from django.conf import settings
-from django.db.models import Q
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from viviendas.models import Residente
 from .models import Puerta, AperturaPuerta
-
-WEBHOOK_TIMEOUT = 5  # segundos
-
+from .services import allowed_doors, open_door, serialize_door, user_role
 
 def _rol(user):
-    return getattr(getattr(user, 'rol', None), 'nombre', None)
+    return user_role(user)
 
 
 def _puertas_permitidas(user):
     """Queryset de puertas activas que el usuario puede abrir."""
-    qs = Puerta.objects.filter(activa=True).select_related('edificio', 'vivienda', 'vivienda__edificio')
-    rol = _rol(user)
-
-    if user.is_superuser or rol == 'Administrador':
-        return qs
-
-    if rol == 'Vigilante':
-        filtro = Q(tipo=Puerta.TIPO_PRINCIPAL)
-        vigilante = getattr(user, 'vigilante', None)
-        if vigilante and getattr(vigilante, 'edificio', None):
-            filtro |= Q(tipo=Puerta.TIPO_EDIFICIO, edificio=vigilante.edificio)
-        return qs.filter(filtro)
-
-    if rol == 'Residente':
-        try:
-            residente = Residente.objects.select_related('vivienda__edificio').get(usuario=user, activo=True)
-        except Residente.DoesNotExist:
-            return qs.none()
-        if not residente.vivienda:
-            return qs.filter(tipo=Puerta.TIPO_PRINCIPAL)
-        return qs.filter(
-            Q(tipo=Puerta.TIPO_PRINCIPAL)
-            | Q(tipo=Puerta.TIPO_EDIFICIO, edificio=residente.vivienda.edificio)
-            | Q(tipo=Puerta.TIPO_VIVIENDA, vivienda=residente.vivienda)
-        )
-
-    return qs.none()
+    return allowed_doors(user)
 
 
 def _serializar_puerta(puerta):
+    data = serialize_door(puerta)
     return {
-        'id': puerta.id,
-        'nombre': puerta.nombre,
-        'tipo': puerta.tipo,
-        'tipo_display': puerta.get_tipo_display(),
-        'edificio': str(puerta.edificio) if puerta.edificio else None,
-        'vivienda': str(puerta.vivienda) if puerta.vivienda else None,
-        'tiene_hardware': bool(puerta.webhook_url),
+        'id': data['id'],
+        'nombre': data['name'],
+        'tipo': data['type'],
+        'tipo_display': data['type_display'],
+        'edificio': data['building'],
+        'vivienda': data['apartment'],
+        'tiene_hardware': data['has_hardware'],
     }
 
 
@@ -83,37 +52,8 @@ def ejecutar_apertura(puerta, usuario):
     HU-04.3: nunca fingir éxito — un timeout o error de red se reporta como
     fallo, jamás como apertura correcta.
     """
-    exito = True
-    detalle = 'Apertura en modo software (sin hardware conectado).'
-
-    if puerta.webhook_url:
-        headers = {}
-        token = getattr(settings, 'PUERTA_WEBHOOK_TOKEN', '')
-        if token:
-            headers['X-Auth-Token'] = token
-        try:
-            resp = requests.post(
-                puerta.webhook_url,
-                json={'accion': 'abrir', 'puerta_id': puerta.id, 'usuario': usuario.username},
-                headers=headers,
-                timeout=WEBHOOK_TIMEOUT,
-            )
-            exito = resp.ok
-            detalle = f'Hardware respondió HTTP {resp.status_code}.'
-        except requests.Timeout:
-            exito = False
-            detalle = 'Timeout: el hardware no respondió a tiempo.'
-        except requests.RequestException as e:
-            exito = False
-            detalle = f'No se pudo contactar el hardware: {type(e).__name__}'
-
-    AperturaPuerta.objects.create(
-        puerta=puerta,
-        usuario=usuario,
-        exito=exito,
-        detalle=detalle[:200],
-    )
-    return exito, detalle
+    result = open_door(usuario, puerta.pk)
+    return bool(result.get('success')), result.get('message', '')
 
 
 @api_view(['POST'])
@@ -144,6 +84,7 @@ def abrir_puerta(request, puerta_id):
     from datetime import timedelta
     from django.utils import timezone
     from agente.models import AgentAction
+    from uuid import uuid4
 
     # Reusar una solicitud pendiente reciente de esta misma puerta/usuario en
     # vez de acumular acciones colgando si el residente toca "Abrir" varias veces.
@@ -153,7 +94,7 @@ def abrir_puerta(request, puerta_id):
             usuario=request.user,
             tipo_accion='CERRADURA_ABRIR',
             estado=AgentAction.PENDIENTE,
-            payload__puerta_id=puerta.id,
+            payload__door_id=puerta.id,
             expira_en__gt=ahora,
         )
         .order_by('-fecha_creacion')
@@ -163,7 +104,9 @@ def abrir_puerta(request, puerta_id):
         accion = AgentAction.objects.create(
             usuario=request.user,
             tipo_accion='CERRADURA_ABRIR',
-            payload={'puerta_id': puerta.id, 'puerta_nombre': puerta.nombre},
+            payload={'door_id': puerta.id},
+            idempotency_key=uuid4().hex,
+            tool_name='open_door',
             expira_en=ahora + timedelta(minutes=5),
         )
 

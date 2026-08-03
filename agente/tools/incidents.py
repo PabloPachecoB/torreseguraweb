@@ -33,11 +33,34 @@ class IncidentTools:
             "MEDIA": "Revisión inicial por personal de mantenimiento.",
             "BAJA": "Revisión programable según disponibilidad del personal.",
         }
+        estimated_hours = {
+            "CRITICA": 2,
+            "ALTA": 24,
+            "MEDIA": 48,
+            "BAJA": 120,
+        }
+        cost_ranges = {
+            "PLOMERIA": (100, 350),
+            "ELECTRICIDAD": (120, 400),
+            "ASCENSOR": (300, 1200),
+            "SEGURIDAD": (150, 500),
+            "LIMPIEZA": (50, 180),
+            "OTRO": (None, None),
+        }
+        cost_min, cost_max = cost_ranges[category]
         estimate = PreliminaryIncidentEstimate(
             category=category,
             urgency=urgency,
             response_window=response_windows[urgency],
-            cost_note="Costo pendiente de inspección técnica; no se asigna responsable de pago.",
+            estimated_hours=estimated_hours[urgency],
+            estimated_cost_min=cost_min,
+            estimated_cost_max=cost_max,
+            currency="BOB",
+            cost_note=(
+                "Rango orientativo pendiente de inspección técnica."
+                if cost_min is not None
+                else "Costo pendiente de inspección técnica."
+            ),
             disclaimer=self.disclaimer,
         )
         return estimate.model_dump()
@@ -118,6 +141,9 @@ class IncidentTools:
                 estimacion_preliminar=request.preliminary_estimate.model_dump(),
                 idempotency_key=action.idempotency_key,
             )
+            from incidencias.services import crear_evaluacion_inicial
+
+            crear_evaluacion_inicial(incident, action.usuario)
             return self._complete_action(action, incident, replayed=False)
 
     def verify_incident(self, action_id: int, user_id: int) -> Dict[str, Any]:
@@ -145,6 +171,7 @@ class IncidentTools:
             "status": "success",
             "incident_id": incident.pk,
             "incident_status": incident.estado,
+            "workflow_status": "PENDING_REVIEW",
         }
 
     @staticmethod
@@ -153,6 +180,9 @@ class IncidentTools:
             "status": "success",
             "incident_id": incident.pk,
             "incident_status": incident.estado,
+            "workflow_status": (
+                "APPROVED" if incident.estado == Incidencia.APROBADA else "PENDING_REVIEW"
+            ),
             "replayed": replayed,
         }
         action.estado_previo = action.estado

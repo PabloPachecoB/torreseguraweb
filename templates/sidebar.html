@@ -242,6 +242,24 @@
     {% endif %}
 
 
+    {% if user.rol.nombre == 'Administrador' or user.rol.nombre == 'Gerente' or user.rol.nombre == 'Personal' %}
+        <div class="sidebar-section">
+            <h6 class="sidebar-heading d-flex justify-content-between align-items-center px-3 mt-3 mb-2 text-white-50">
+                <span><i class="fas fa-screwdriver-wrench me-2"></i>Mantenimiento</span>
+            </h6>
+            <ul class="nav flex-column collapse show">
+                <li class="nav-item">
+                    <a class="nav-link text-white sidebar-link {% if '/incidencias/' in request.path %}active{% endif %}"
+                       href="{% url 'incidencia-revision-list' %}">
+                        <i class="fas fa-clipboard-check me-2"></i>
+                        <span>Revisión de incidencias</span>
+                    </a>
+                </li>
+            </ul>
+        </div>
+    {% endif %}
+
+
 
 
             

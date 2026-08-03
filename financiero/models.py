@@ -3,6 +3,7 @@ from django.core.validators import MinValueValidator
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from decimal import Decimal
 from usuarios.models import Usuario
 from viviendas.models import Vivienda, Residente, Edificio
 
@@ -119,11 +120,17 @@ class Cuota(models.Model):
             meses_retraso = max(1, meses_retraso)
             
             # Calcular recargo acumulado
-            porcentaje_recargo_mensual = self.concepto.porcentaje_recargo / 100
-            recargo_acumulado = self.monto * porcentaje_recargo_mensual * meses_retraso
+            porcentaje_recargo = Decimal(
+                str(self.concepto.porcentaje_recargo)
+            )
+            monto = Decimal(str(self.monto))
+            porcentaje_recargo_mensual = porcentaje_recargo / Decimal('100')
+            recargo_acumulado = (
+                monto * porcentaje_recargo_mensual * Decimal(meses_retraso)
+            )
 
-            return round(recargo_acumulado, 2)
-        return 0
+            return recargo_acumulado.quantize(Decimal('0.01'))
+        return Decimal('0.00')
     
     def actualizar_recargo(self):
         """Actualiza el campo recargo según el cálculo actual"""
