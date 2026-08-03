@@ -6,7 +6,7 @@ from rest_framework.test import APIClient
 from .models import Visita, MovimientoResidente
 from usuarios.models import Rol
 from viviendas.models import Edificio, Vivienda, Residente
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from unittest.mock import patch
 
 class VisitaModelTest(TestCase):
@@ -575,13 +575,20 @@ class ReservaVisitaApiTest(TestCase):
 
     def test_verificar_dentro_de_ventana_confirma_ingreso(self):
         ahora = timezone.localtime()
+        # La ventana se recorta al dia en curso. Sin esto, entre las 23:30 y las
+        # 00:30 el margen de +/-30 min cruzaba medianoche y hora_fin quedaba
+        # ANTES que hora_inicio, con lo que la visita nacia expirada y el test
+        # fallaba una hora al dia. Un horario que cruza medianoche ni siquiera es
+        # representable: create_visit_authorization rechaza hora_fin <= hora_inicio.
+        inicio = ahora - timedelta(minutes=30)
+        fin = ahora + timedelta(minutes=30)
         visita = Visita.objects.create(
             nombre_visitante='Juan Perez', documento_visitante='1234567',
             vivienda_destino=self.vivienda, residente_autoriza=self.residente,
             cantidad_personas=4, estado=Visita.RESERVADA,
             fecha_visita=ahora.date(),
-            hora_inicio=(ahora - timedelta(minutes=30)).time(),
-            hora_fin=(ahora + timedelta(minutes=30)).time(),
+            hora_inicio=time.min if inicio.date() < ahora.date() else inicio.time(),
+            hora_fin=time.max if fin.date() > ahora.date() else fin.time(),
         )
         response = self._verificar_qr(visita)
         self.assertEqual(response.status_code, 200)
@@ -592,28 +599,35 @@ class ReservaVisitaApiTest(TestCase):
         self.assertIsNotNone(visita.fecha_hora_entrada)
 
     def test_verificar_antes_de_hora_inicio_da_403(self):
+        # Anclado a manana con horas fijas: desplazar solo la hora hacia adelante
+        # se salia del dia cuando el test corria de noche, y entonces el 403 lo
+        # producia "ventana expirada" en vez de "ventana no iniciada" — verde por
+        # el motivo equivocado.
         ahora = timezone.localtime()
         visita = Visita.objects.create(
             nombre_visitante='Juan Perez', documento_visitante='1234567',
             vivienda_destino=self.vivienda, residente_autoriza=self.residente,
             estado=Visita.RESERVADA,
-            fecha_visita=ahora.date(),
-            hora_inicio=(ahora + timedelta(hours=1)).time(),
-            hora_fin=(ahora + timedelta(hours=2)).time(),
+            fecha_visita=ahora.date() + timedelta(days=1),
+            hora_inicio=time(8, 0),
+            hora_fin=time(10, 0),
         )
         response = self._verificar_qr(visita)
         self.assertEqual(response.status_code, 403)
         self.assertFalse(response.data['valido'])
 
     def test_verificar_despues_de_hora_fin_da_403_y_expira(self):
+        # Anclado a ayer con horas fijas, por el motivo simetrico al test de
+        # arriba: de madrugada, restar horas cruzaba al dia anterior y el 403
+        # venia de "ventana no iniciada" en vez de "ventana expirada".
         ahora = timezone.localtime()
         visita = Visita.objects.create(
             nombre_visitante='Juan Perez', documento_visitante='1234567',
             vivienda_destino=self.vivienda, residente_autoriza=self.residente,
             estado=Visita.RESERVADA,
-            fecha_visita=ahora.date(),
-            hora_inicio=(ahora - timedelta(hours=2)).time(),
-            hora_fin=(ahora - timedelta(hours=1)).time(),
+            fecha_visita=ahora.date() - timedelta(days=1),
+            hora_inicio=time(8, 0),
+            hora_fin=time(10, 0),
         )
         response = self._verificar_qr(visita)
         self.assertEqual(response.status_code, 403)
